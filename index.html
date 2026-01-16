@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hybrid Audio Visualizer</title>
+    <style>
+        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; }
+        canvas { display: block; }
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: rgba(0,0,0,0.85); z-index: 100; transition: opacity 0.5s;
+        }
+        button {
+            padding: 15px 40px; font-size: 16px; font-weight: bold;
+            background: linear-gradient(45deg, #ff007b, #7b00ff);
+            color: white; border: none; border-radius: 50px; cursor: pointer;
+        }
+        #mode-indicator {
+            position: absolute; top: 10px; right: 10px; font-size: 10px; color: #555;
+        }
+    </style>
+</head>
+<body>
+
+<div id="overlay">
+    <button id="startBtn">START ENGINE</button>
+    <p style="font-size: 12px; color: #aaa; margin-top: 15px;">マイクが使えない場合はデモモードで起動します</p>
+</div>
+<div id="mode-indicator">Mode: Waiting...</div>
+<canvas id="waveCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('waveCanvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const indicator = document.getElementById('mode-indicator');
+
+let audioCtx, analyser, dataArray;
+let particles = [];
+let isRunning = false;
+let useMicrophone = false;
+let t = 0;
+
+const config = {
+    barWidth: 2,
+    gap: 1,
+    hueStart: 280,
+    hueEnd: 30,
+    amp: 0.6
+};
+
+async function start() {
+    try {
+        // マイク取得を試みる
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+        useMicrophone = true;
+        indicator.innerText = "Mode: Microphone Active";
+    } catch (err) {
+        // 失敗した場合はシミュレーションモード
+        console.warn("Microphone access denied. Falling back to simulation.");
+        dataArray = new Uint8Array(256); // ダミーデータ配列
+        useMicrophone = false;
+        indicator.innerText = "Mode: Simulation (No Mic)";
+    }
+
+    overlay.style.opacity = '0';
+    setTimeout(() => overlay.style.display = 'none', 500);
+    isRunning = true;
+    resize();
+    animate();
+}
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+
+function animate() {
+    if (!isRunning) return;
+    requestAnimationFrame(animate);
+    t += 0.02;
+
+    if (useMicrophone) {
+        analyser.getByteFrequencyData(dataArray);
+    } else {
+        // シミュレーション波形の生成
+        for (let i = 0; i < dataArray.length; i++) {
+            let s = Math.sin(t + i * 0.1) * 50 + Math.sin(t * 1.5 + i * 0.05) * 30 + 100;
+            dataArray[i] = Math.max(0, s);
+        }
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(2, 2, 10, 0.2)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const barCount = Math.floor(canvas.width / (config.barWidth + config.gap));
+    const baseY = canvas.height * 0.65;
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    for (let i = 0; i < barCount; i++) {
+        const relX = i / barCount;
+        const x = i * (config.barWidth + config.gap);
+        
+        // 音量データのマッピング
+        const dataIdx = Math.floor(relX * dataArray.length * 0.8);
+        let val = dataArray[dataIdx];
+        let h = (val / 255) * canvas.height * config.amp * Math.sin(relX * Math.PI);
+
+        const hue = config.hueStart + (config.hueEnd - config.hueStart) * relX;
+
+        // バー描画
+        const grd = ctx.createLinearGradient(x, baseY - h, x, baseY);
+        grd.addColorStop(0, `hsla(${hue}, 100%, 75%, 0.8)`);
+        grd.addColorStop(1, `hsla(${hue}, 80%, 40%, 0)`);
+        ctx.fillStyle = grd;
+        ctx.fillRect(x, baseY - h, config.barWidth, h);
+
+        // 反射
+        ctx.fillStyle = `hsla(${hue}, 80%, 50%, 0.1)`;
+        ctx.fillRect(x, baseY + 4, config.barWidth, h * 0.4);
+
+        // 粒子の放出（ピーク時のみ）
+        if (val > 200 && Math.random() > 0.9) {
+            particles.push({
+                x: x, y: baseY - h, 
+                vx: (Math.random() - 0.5) * 2, vy: -Math.random() * 3,
+                life: 1.0, hue: hue
+            });
+        }
+    }
+
+    // 粒子の描画更新
+    particles.forEach((p, idx) => {
+        p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+        if(p.life <= 0) particles.splice(idx, 1);
+        ctx.fillStyle = `hsla(${p.hue}, 100%, 70%, ${p.life})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2 * p.life, 0, Math.PI*2);
+        ctx.fill();
+    });
+}
+
+startBtn.addEventListener('click', start);
+window.addEventListener('resize', resize);
+</script>
+</body>
+</html>
