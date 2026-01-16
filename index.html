@@ -3,58 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hybrid Audio Visualizer</title>
+    <title>Audio Engine v2026.01.17-01</title>
     <style>
-        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; }
+        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
         canvas { display: block; }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: rgba(0,0,0,0.85); z-index: 100; transition: opacity 0.5s;
+            background: rgba(0,0,0,0.9); z-index: 100; transition: opacity 0.5s;
         }
         button {
-            padding: 15px 40px; font-size: 16px; font-weight: bold;
-            background: linear-gradient(45deg, #ff007b, #7b00ff);
+            padding: 18px 45px; font-size: 16px; font-weight: bold;
+            background: linear-gradient(45deg, #00f2fe, #4facfe);
             color: white; border: none; border-radius: 50px; cursor: pointer;
+            box-shadow: 0 0 15px rgba(79, 172, 254, 0.4);
         }
-        #mode-indicator {
-            position: absolute; top: 10px; right: 10px; font-size: 10px; color: #555;
+        #monitor {
+            position: absolute; top: 15px; left: 15px; font-size: 11px;
+            background: rgba(0,0,0,0.7); padding: 12px; border-radius: 8px;
+            border: 1px solid #333; pointer-events: none; line-height: 1.6;
         }
+        .active-label { color: #ff007b; font-weight: bold; animation: blink 0.2s infinite; }
+        @keyframes blink { 50% { opacity: 0.5; } }
+        #ver-tag { position: absolute; bottom: 10px; right: 10px; font-size: 9px; color: #444; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <button id="startBtn">START ENGINE</button>
-    <p style="font-size: 12px; color: #aaa; margin-top: 15px;">マイクが使えない場合はデモモードで起動します</p>
+    <button id="startBtn">START ENGINE (v2026.01.17-01)</button>
+    <p style="font-size: 11px; color: #666; margin-top: 15px;">マイク許可が必要です</p>
 </div>
-<div id="mode-indicator">Mode: Waiting...</div>
+
+<div id="monitor">
+    <div style="color: #00d4ff;">SYSTEM MONITOR</div>
+    LOW (0-10Hz Avg): <span id="lowVal">0</span> <span id="lowStatus"></span><br>
+    HIGH (150-200Hz Avg): <span id="highVal">0</span> <span id="highStatus"></span>
+</div>
+
+<div id="ver-tag">ENGINE_ID: 2026.01.17-01</div>
+
 <canvas id="waveCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d');
-const overlay = document.getElementById('overlay');
 const startBtn = document.getElementById('startBtn');
-const indicator = document.getElementById('mode-indicator');
 
 let audioCtx, analyser, dataArray;
 let particles = [];
 let isRunning = false;
-let useMicrophone = false;
-let t = 0;
+let shakeTime = 0;
 
+// 設定値
 const config = {
     barWidth: 2,
     gap: 1,
-    hueStart: 280,
-    hueEnd: 30,
-    amp: 0.6
+    hueS: 280, // 紫
+    hueE: 30,  // オレンジ
+    // しきい値を少し下げて反応しやすくしました
+    bassThreshold: 180,   
+    trebleThreshold: 100  
 };
 
-async function start() {
+async function init() {
     try {
-        // マイク取得を試みる
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const source = audioCtx.createMediaStreamSource(stream);
@@ -62,21 +75,14 @@ async function start() {
         analyser.fftSize = 512;
         source.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
-        useMicrophone = true;
-        indicator.innerText = "Mode: Microphone Active";
+        
+        document.getElementById('overlay').style.display = 'none';
+        isRunning = true;
+        resize();
+        animate();
     } catch (err) {
-        // 失敗した場合はシミュレーションモード
-        console.warn("Microphone access denied. Falling back to simulation.");
-        dataArray = new Uint8Array(256); // ダミーデータ配列
-        useMicrophone = false;
-        indicator.innerText = "Mode: Simulation (No Mic)";
+        alert("マイク接続エラー: " + err);
     }
-
-    overlay.style.opacity = '0';
-    setTimeout(() => overlay.style.display = 'none', 500);
-    isRunning = true;
-    resize();
-    animate();
 }
 
 function resize() {
@@ -87,71 +93,106 @@ function resize() {
 function animate() {
     if (!isRunning) return;
     requestAnimationFrame(animate);
-    t += 0.02;
+    analyser.getByteFrequencyData(dataArray);
 
-    if (useMicrophone) {
-        analyser.getByteFrequencyData(dataArray);
-    } else {
-        // シミュレーション波形の生成
-        for (let i = 0; i < dataArray.length; i++) {
-            let s = Math.sin(t + i * 0.1) * 50 + Math.sin(t * 1.5 + i * 0.05) * 30 + 100;
-            dataArray[i] = Math.max(0, s);
-        }
+    // --- 周波数判定のロジック改善 (範囲平均を取る) ---
+    let bassSum = 0;
+    for(let i=0; i<8; i++) bassSum += dataArray[i];
+    const bassAvg = bassSum / 8;
+
+    let trebleSum = 0;
+    for(let i=150; i<200; i++) trebleSum += dataArray[i];
+    const trebleAvg = trebleSum / 50;
+
+    // モニター更新
+    document.getElementById('lowVal').innerText = Math.floor(bassAvg);
+    document.getElementById('highVal').innerText = Math.floor(trebleAvg);
+
+    // --- エフェクト判定 ---
+    let isBassTrigger = bassAvg > config.bassThreshold;
+    let isTrebleTrigger = trebleAvg > config.trebleThreshold;
+
+    document.getElementById('lowStatus').innerHTML = isBassTrigger ? '<span class="active-label">SHAKE!</span>' : '';
+    document.getElementById('highStatus').innerHTML = isTrebleTrigger ? '<span class="active-label">SPARK!</span>' : '';
+
+    if (isBassTrigger) shakeTime = 8;
+
+    // --- 描画処理 ---
+    ctx.save();
+    if (shakeTime > 0) {
+        ctx.translate((Math.random()-0.5)*15, (Math.random()-0.5)*15);
+        shakeTime--;
     }
 
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = 'rgba(2, 2, 10, 0.2)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(2, 2, 12, 0.25)';
+    ctx.fillRect(-50, -50, canvas.width+100, canvas.height+100);
 
     const barCount = Math.floor(canvas.width / (config.barWidth + config.gap));
     const baseY = canvas.height * 0.65;
 
     ctx.globalCompositeOperation = 'lighter';
 
+    // 低音ヒット時に背景に一瞬だけ光を
+    if(isBassTrigger) {
+        ctx.fillStyle = 'rgba(123, 0, 255, 0.05)';
+        ctx.fillRect(0,0, canvas.width, canvas.height);
+    }
+
     for (let i = 0; i < barCount; i++) {
         const relX = i / barCount;
         const x = i * (config.barWidth + config.gap);
-        
-        // 音量データのマッピング
         const dataIdx = Math.floor(relX * dataArray.length * 0.8);
-        let val = dataArray[dataIdx];
-        let h = (val / 255) * canvas.height * config.amp * Math.sin(relX * Math.PI);
+        const val = dataArray[dataIdx];
+        const h = (val / 255) * canvas.height * 0.65 * Math.sin(relX * Math.PI);
 
-        const hue = config.hueStart + (config.hueEnd - config.hueStart) * relX;
+        const hue = config.hueS + (config.hueE - config.hueS) * relX;
 
-        // バー描画
+        // メインバー
         const grd = ctx.createLinearGradient(x, baseY - h, x, baseY);
-        grd.addColorStop(0, `hsla(${hue}, 100%, 75%, 0.8)`);
-        grd.addColorStop(1, `hsla(${hue}, 80%, 40%, 0)`);
+        grd.addColorStop(0, `hsla(${hue}, 100%, 75%, 0.85)`);
+        grd.addColorStop(1, `hsla(${hue}, 80%, 30%, 0)`);
         ctx.fillStyle = grd;
         ctx.fillRect(x, baseY - h, config.barWidth, h);
 
-        // 反射
-        ctx.fillStyle = `hsla(${hue}, 80%, 50%, 0.1)`;
-        ctx.fillRect(x, baseY + 4, config.barWidth, h * 0.4);
+        // 高音ヒット時にその位置から火花を飛ばす
+        if (isTrebleTrigger && Math.random() > 0.98) {
+            particles.push({
+                x: Math.random() * canvas.width, y: Math.random() * canvas.height,
+                vx: (Math.random()-0.5)*20, vy: (Math.random()-0.5)*20,
+                life: 1.0, color: '#fff', size: 2
+            });
+        }
 
-        // 粒子の放出（ピーク時のみ）
-        if (val > 200 && Math.random() > 0.9) {
+        // 通常の浮遊粒子
+        if (val > 210 && Math.random() > 0.9) {
             particles.push({
                 x: x, y: baseY - h, 
-                vx: (Math.random() - 0.5) * 2, vy: -Math.random() * 3,
-                life: 1.0, hue: hue
+                vx: (Math.random()-0.5)*2, vy: -Math.random()*4,
+                life: 1.0, color: `hsla(${hue}, 100%, 70%, 1)`, size: 1.5
             });
         }
     }
 
-    // 粒子の描画更新
-    particles.forEach((p, idx) => {
+    // 粒子描画
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
         p.x += p.vx; p.y += p.vy; p.life -= 0.02;
-        if(p.life <= 0) particles.splice(idx, 1);
-        ctx.fillStyle = `hsla(${p.hue}, 100%, 70%, ${p.life})`;
+        if (p.life <= 0) {
+            particles.splice(i, 1);
+            continue;
+        }
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.life;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 2 * p.life, 0, Math.PI*2);
+        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
         ctx.fill();
-    });
+    }
+
+    ctx.restore();
 }
 
-startBtn.addEventListener('click', start);
+startBtn.addEventListener('click', init);
 window.addEventListener('resize', resize);
 </script>
 </body>
