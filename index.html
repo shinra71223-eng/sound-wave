@@ -3,51 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Neon Analyzer v12</title>
+    <title>Neon Analyzer v12.1</title>
     <style>
-        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; }
         canvas { display: block; }
-        
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: radial-gradient(circle, #1a1a2e 0%, #000 100%); z-index: 100; transition: 0.8s;
+            background: #05050a; z-index: 100; transition: 0.5s;
         }
         .start-btn {
-            padding: 20px 50px; font-size: 18px; color: #00f2fe; background: transparent;
+            padding: 18px 45px; font-size: 16px; color: #00f2fe; background: transparent;
             border: 2px solid #00f2fe; border-radius: 50px; cursor: pointer; font-weight: bold;
-            box-shadow: 0 0 20px rgba(0, 242, 254, 0.3); transition: 0.3s;
         }
-        .start-btn:hover { background: #00f2fe; color: #000; }
-
-        /* ダッシュボード */
         #dashboard {
-            position: absolute; bottom: -100px; left: 50%; transform: translateX(-50%);
-            width: 90%; max-width: 500px; background: rgba(10, 10, 20, 0.85);
-            backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 20px 20px 0 0; padding: 15px; transition: 0.5s; z-index: 50;
-            display: flex; flex-direction: column; gap: 10px;
+            position: absolute; bottom: -120px; left: 50%; transform: translateX(-50%);
+            width: 90%; max-width: 450px; background: rgba(10, 10, 25, 0.9);
+            backdrop-filter: blur(15px); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px 20px 0 0; padding: 15px; transition: 0.4s; z-index: 50;
         }
         #dashboard.active { bottom: 0; }
         .tab-handle {
             position: absolute; top: -30px; left: 50%; transform: translateX(-50%);
-            background: rgba(10, 10, 20, 0.85); padding: 5px 20px; border-radius: 10px 10px 0 0;
+            background: rgba(10, 10, 25, 0.9); padding: 5px 20px; border-radius: 10px 10px 0 0;
             font-size: 10px; color: #00f2fe; cursor: pointer;
         }
-        .mode-row { display: flex; justify-content: space-around; gap: 10px; }
-        .mode-btn {
-            flex: 1; padding: 8px; font-size: 11px; background: #222; border: 1px solid #444;
-            color: #ccc; border-radius: 5px; cursor: pointer;
-        }
+        .mode-row { display: flex; gap: 10px; margin-bottom: 10px; }
+        .mode-btn { flex: 1; padding: 10px; font-size: 11px; background: #1a1a1a; border: 1px solid #333; color: #888; border-radius: 8px; cursor: pointer; }
         .mode-btn.active { border-color: #00f2fe; color: #00f2fe; background: rgba(0, 242, 254, 0.1); }
-        .slider-row { display: flex; align-items: center; gap: 10px; font-size: 11px; color: #888; }
+        .slider-row { display: flex; align-items: center; gap: 10px; font-size: 11px; color: #666; }
         input[type="range"] { flex: 1; accent-color: #00f2fe; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <button class="start-btn" onclick="startApp()">START VISUALIZER v12</button>
+    <button class="start-btn" onclick="startApp()">LAUNCH ENGINE v12.1</button>
 </div>
 
 <div id="dashboard">
@@ -60,9 +51,6 @@
     <div class="slider-row">
         SENSITIVITY <input type="range" id="sensSlider" min="0.1" max="5.0" step="0.1" value="1.5">
     </div>
-    <div class="slider-row" style="justify-content: center; font-size: 9px;">
-        AUTO-GAIN: <span id="autoGainVal">1.0</span>x / <span id="currentPeak">0</span>
-    </div>
 </div>
 
 <canvas id="waveCanvas"></canvas>
@@ -74,7 +62,7 @@ let audioCtx, analyser, dataArray, sourceNode;
 let isRunning = false;
 let currentMode = 'ART';
 let barMapping = [];
-let maxVolume = 1; // オートゲイン用
+let maxVolume = 10; 
 
 function toggleDash() { document.getElementById('dashboard').classList.toggle('active'); }
 
@@ -82,7 +70,6 @@ function setMode(mode) {
     currentMode = mode;
     document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('btn-' + mode.toLowerCase()).classList.add('active');
-    setupMapping();
 }
 
 async function startApp() {
@@ -91,22 +78,25 @@ async function startApp() {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         sourceNode = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 8192; // 安定性と解像度のバランス
+        analyser.fftSize = 4096; // 負荷軽減のため1ランク下げて安定化
         analyser.smoothingTimeConstant = 0.75;
         sourceNode.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
+        
         document.getElementById('overlay').style.opacity = '0';
-        setTimeout(() => document.getElementById('overlay').style.display = 'none', 800);
+        setTimeout(() => document.getElementById('overlay').style.display = 'none', 500);
         isRunning = true;
         resize();
         animate();
-    } catch (err) { alert("Mic Error: " + err); }
+    } catch (err) { alert("Mic Access Error: " + err); }
 }
 
+// A特性補正の定数化と最適化
 function getAWeighting(f) {
     if (f <= 20) return -50;
     const f2 = f * f;
-    const rA = (12194 ** 2 * f2 ** 2) / ((f2 + 20.6 ** 2) * Math.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2)) * (f2 + 12194 ** 2));
+    const rA = (148693636 * f2 * f2) / 
+               ((f2 + 424.36) * Math.sqrt((f2 + 11599.29) * (f2 + 544496.41)) * (f2 + 148693636));
     return 20 * Math.log10(rA) + 2.0;
 }
 
@@ -122,13 +112,13 @@ function setupMapping() {
     const barCount = Math.floor(canvas.width / barWidth);
     const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
     const minFreq = 20;
-    const maxFreq = (sampleRate / 2) * 0.7;
+    const maxFreq = (sampleRate / 2) * 0.75;
 
     for (let i = 0; i < barCount; i++) {
         const relX = i / barCount;
         const f = minFreq * Math.pow(maxFreq / minFreq, relX);
-        const binIdx = Math.round((f * 8192) / sampleRate);
-        const hue = 280 + (30 - 280) * relX;
+        const binIdx = Math.round((f * (analyser ? analyser.fftSize : 4096)) / sampleRate);
+        const hue = 280 + (40 - 280) * relX;
         barMapping.push({ binIdx, weight: getAWeighting(f), x: i * barWidth, hue });
     }
 }
@@ -138,18 +128,14 @@ function animate() {
     requestAnimationFrame(animate);
     analyser.getByteFrequencyData(dataArray);
 
-    // --- オートゲイン・ロジック ---
+    // オートゲインの計算
     let frameMax = 0;
-    for(let i=0; i<dataArray.length; i++) if(dataArray[i] > frameMax) frameMax = dataArray[i];
-    // 徐々にピークを減衰させることで環境の変化に追従
-    maxVolume = Math.max(frameMax, maxVolume * 0.995, 10); 
-    const autoGain = 200 / maxVolume; 
-    document.getElementById('autoGainVal').innerText = autoGain.toFixed(1);
-    document.getElementById('currentPeak').innerText = frameMax;
+    for(let i=0; i<dataArray.length; i++) { if(dataArray[i] > frameMax) frameMax = dataArray[i]; }
+    maxVolume = Math.max(frameMax, maxVolume * 0.99, 10); 
+    const autoGain = 220 / maxVolume; 
 
-    // 背景（残像）
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = 'rgba(0, 0, 8, 0.2)';
+    ctx.fillStyle = 'rgba(0, 0, 5, 0.25)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     const baseY = canvas.height * 0.7;
@@ -159,34 +145,37 @@ function animate() {
         const m = barMapping[i];
         let val = dataArray[m.binIdx] || 0;
 
-        // モードによる補正
         let h;
         if (currentMode === 'RAW') {
-            h = (val / 255) * canvas.height * 0.6 * userSens;
+            h = (val / 255) * canvas.height * 0.5 * userSens;
         } else {
-            // ART/VOICEモード: 聴感補正 + オートゲイン
-            let pVal = Math.max(0, (val + m.weight) * autoGain);
+            let pVal = Math.max(0, (val + m.weight) * (currentMode === 'VOICE' ? autoGain : 1.2));
             h = (pVal / 255) * canvas.height * 0.6 * userSens * Math.sin((i / barMapping.length) * Math.PI);
         }
 
-        // --- 描画 (美しさの追求) ---
+        // --- 安全策: 高さをキャンバス内に制限 ---
+        h = Math.min(h, canvas.height * 0.95);
+        if (h < 2) h = 2;
+
         ctx.globalCompositeOperation = 'lighter';
         
-        // 1. メインの光の柱
+        // メインバー（ネオン風グラデーション）
         const grd = ctx.createLinearGradient(m.x, baseY - h, m.x, baseY);
-        grd.addColorStop(0, `hsla(${m.hue}, 100%, 80%, 0.9)`);
-        grd.addColorStop(1, `hsla(${m.hue}, 80%, 40%, 0)`);
+        grd.addColorStop(0, `hsla(${m.hue}, 100%, 80%, 0.85)`);
+        grd.addColorStop(1, `hsla(${m.hue}, 80%, 30%, 0)`);
         ctx.fillStyle = grd;
         ctx.fillRect(m.x, baseY - h, 2, h);
 
-        if (currentMode === 'ART' && h > 10) {
-            // 2. 先端のグロー（輝き）
-            ctx.fillStyle = `hsla(${m.hue}, 100%, 90%, 0.5)`;
+        // ARTモード限定: 輝きエフェクト
+        if (currentMode === 'ART' && h > 15) {
+            ctx.fillStyle = `hsla(${m.hue}, 100%, 90%, 0.4)`;
             ctx.beginPath();
             ctx.arc(m.x + 1, baseY - h, 2, 0, Math.PI * 2);
             ctx.fill();
-
-            // 3. 床の反射
-            ctx.fillStyle = `hsla(${m.hue}, 100%, 50%, 0.15)`;
-            ctx.fillRect(m.x, baseY + 5, 2, h * 0.3);
         }
+    }
+}
+window.addEventListener('resize', resize);
+</script>
+</body>
+</html>
