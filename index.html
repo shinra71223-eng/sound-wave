@@ -3,45 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ethereal Art v14.0</title>
+    <title>Ethereal Lite v14.1</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; touch-action: none; }
-        canvas { display: block; filter: contrast(1.2) brightness(1.1); }
+        canvas { display: block; }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
             background: #000; z-index: 100;
         }
         .start-btn {
-            padding: 20px 50px; font-size: 16px; color: #00f2fe; background: transparent;
-            border: 1px solid #00f2fe; border-radius: 2px; cursor: pointer; letter-spacing: 4px;
-            box-shadow: 0 0 20px rgba(0, 242, 254, 0.2);
+            padding: 15px 40px; font-size: 15px; color: #00f2fe; background: transparent;
+            border: 1px solid #00f2fe; border-radius: 4px; cursor: pointer; letter-spacing: 2px;
         }
         #ui-layer {
-            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-            width: 85%; z-index: 50; display: flex; flex-direction: column; gap: 15px;
-            background: rgba(0,0,0,0.5); padding: 20px; border-radius: 10px; backdrop-filter: blur(5px);
+            position: absolute; bottom: 25px; left: 50%; transform: translateX(-50%);
+            width: 85%; max-width: 400px; z-index: 50; background: rgba(0,0,0,0.6); 
+            padding: 15px; border-radius: 12px; backdrop-filter: blur(10px);
         }
-        .engine-selector { display: flex; justify-content: space-between; gap: 10px; }
+        .engine-selector { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
         .m-btn {
-            flex: 1; padding: 10px; font-size: 9px; background: rgba(255,255,255,0.05);
+            flex: 1; padding: 8px; font-size: 9px; background: rgba(255,255,255,0.05);
             border: 1px solid rgba(255,255,255,0.2); color: #888; border-radius: 4px;
         }
         .m-btn.active { border-color: #fff; color: #fff; background: rgba(255,255,255,0.1); }
-        input[type="range"] { width: 100%; accent-color: #fff; }
+        input[type="range"] { width: 100%; accent-color: #00f2fe; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">ENTER ART SPACE</button>
+    <button id="startBtn" class="start-btn">START ART ENGINE</button>
 </div>
 
 <div id="ui-layer">
     <div class="engine-selector">
         <button id="e-music" class="m-btn active" onclick="setEngine('MUSIC')">MUSIC</button>
         <button id="e-voice" class="m-btn" onclick="setEngine('VOICE')">VOICE</button>
-        <button id="e-perc" class="m-btn" onclick="setEngine('PERC')">ENVIRONMENT</button>
+        <button id="e-perc" class="m-btn" onclick="setEngine('PERC')">ENV</button>
     </div>
     <input type="range" id="sensSlider" min="1" max="15" step="0.1" value="5">
 </div>
@@ -50,35 +49,31 @@
 
 <script>
 const canvas = document.getElementById('waveCanvas');
-const ctx = canvas.getContext('2d');
+const ctx = canvas.getContext('2d', { alpha: false }); // 背景不透明化で高速化
 let audioCtx, analyser, dataArray, isRunning = false;
-let bands = [], particles = [], currentEngine = 'MUSIC';
+let bands = [], currentEngine = 'MUSIC';
 
-class Particle {
-    constructor(x, y, hue) {
-        this.x = x; this.y = y;
-        this.vx = (Math.random() - 0.5) * 2;
-        this.vy = (Math.random() - 0.5) * 2;
-        this.size = Math.random() * 3 + 1;
-        this.life = 1.0;
-        this.hue = hue;
-    }
-    update() {
-        this.x += this.vx; this.y += this.vy;
-        this.life -= 0.01;
-    }
-    draw() {
-        ctx.fillStyle = `hsla(${this.hue}, 100%, 70%, ${this.life})`;
-        ctx.shadowBlur = 10; ctx.shadowColor = `hsla(${this.hue}, 100%, 50%, 1)`;
-        ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, 7); ctx.fill();
-        ctx.shadowBlur = 0;
-    }
+// オブジェクト・プーリング: 粒子を再利用
+const MAX_PARTICLES = 400;
+const particlePool = Array.from({ length: MAX_PARTICLES }, () => ({
+    x: 0, y: 0, vx: 0, vy: 0, life: 0, hue: 0, size: 0, active: false
+}));
+
+function spawnParticle(x, y, hue) {
+    const p = particlePool.find(p => !p.active) || particlePool[0];
+    p.active = true;
+    p.x = x; p.y = y;
+    p.vx = (Math.random() - 0.5) * 2.5;
+    p.vy = (Math.random() - 0.5) * 2.5;
+    p.life = 1.0;
+    p.hue = hue;
+    p.size = Math.random() * 2.5 + 1;
 }
 
 function setEngine(e) {
     currentEngine = e;
     ['MUSIC', 'VOICE', 'PERC'].forEach(m => document.getElementById('e-' + m.toLowerCase()).classList.toggle('active', e === m));
-    if (analyser) analyser.smoothingTimeConstant = (e === 'PERC') ? 0.4 : 0.8;
+    if (analyser) analyser.smoothingTimeConstant = (e === 'PERC') ? 0.35 : 0.75;
 }
 
 document.getElementById('startBtn').onclick = async () => {
@@ -87,7 +82,7 @@ document.getElementById('startBtn').onclick = async () => {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const source = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 4096;
+        analyser.fftSize = 2048; // スマホでの処理速度を優先しつつ解像度を維持
         source.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
         document.getElementById('overlay').style.display = 'none';
@@ -103,11 +98,12 @@ function resize() {
 function setupBands() {
     bands = [];
     let freq = 20;
+    const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
     while (freq < 16000) {
-        const start = Math.floor(freq * 4096 / 44100);
-        const end = Math.ceil(freq * 1.2 * 4096 / 44100);
+        const start = Math.floor(freq * 2048 / sampleRate);
+        const end = Math.ceil(freq * 1.3 * 2048 / sampleRate);
         bands.push({ freq, start, end });
-        freq *= 1.3;
+        freq *= 1.35;
     }
 }
 
@@ -116,13 +112,15 @@ function animate() {
     requestAnimationFrame(animate);
     analyser.getByteFrequencyData(dataArray);
 
-    // 背景の残像処理（漆黒に溶け込む光）
+    // 背景描画（source-over で上塗り）
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = 'rgba(0, 0, 5, 0.15)';
+    ctx.fillStyle = '#000005';
+    ctx.globalAlpha = 0.18; // 残像感
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalAlpha = 1.0;
 
     const sens = parseFloat(document.getElementById('sensSlider').value);
-    const centerY = canvas.height * 0.5;
+    const centerY = canvas.height * 0.53;
     const spacing = canvas.width / (bands.length + 1);
 
     ctx.globalCompositeOperation = 'lighter';
@@ -132,34 +130,39 @@ function animate() {
         for (let j = b.start; j <= b.end; j++) sum += dataArray[j];
         const val = sum / (b.end - b.start + 1);
         
-        // 音の高さと強さに連動したカラーロジック
         let hue;
-        if (currentEngine === 'MUSIC') hue = 240 - (i * 10);
-        else if (currentEngine === 'VOICE') hue = 20 + (i * 5);
-        else hue = 180 + (Math.random() * 20);
+        if (currentEngine === 'MUSIC') hue = 250 - (i * 8);
+        else if (currentEngine === 'VOICE') hue = 25 + (i * 4);
+        else hue = 190 + (Math.random() * 15);
 
-        const h = (val / 255) * canvas.height * 0.4 * sens;
+        const h = (val / 255) * canvas.height * 0.45 * sens;
         const x = spacing + i * spacing;
 
-        if (h > 10) {
-            // エネルギーの「核」を波紋として描画
-            const grad = ctx.createRadialGradient(x, centerY, 0, x, centerY, h);
-            grad.addColorStop(0, `hsla(${hue}, 100%, 70%, 0.6)`);
-            grad.addColorStop(1, `transparent`);
-            ctx.fillStyle = grad;
+        if (h > 15) {
+            // グラデーションの代わりにシンプルな半透明の円で描画負荷を低減
+            ctx.fillStyle = `hsla(${hue}, 100%, 65%, 0.45)`;
             ctx.beginPath();
-            ctx.ellipse(x, centerY, h * 0.2, h, 0, 0, Math.PI * 2);
+            ctx.ellipse(x, centerY, h * 0.15, h, 0, 0, Math.PI * 2);
             ctx.fill();
 
-            // 粒子(パーティクル)の放出
-            if (Math.random() > 0.85) particles.push(new Particle(x, centerY - h, hue));
-            if (Math.random() > 0.85) particles.push(new Particle(x, centerY + h, hue));
+            // 粒子生成
+            if (Math.random() > 0.88) spawnParticle(x, centerY - h * 0.8, hue);
+            if (Math.random() > 0.88) spawnParticle(x, centerY + h * 0.8, hue);
         }
     });
 
-    // 全パーティクルの更新と描画
-    particles = particles.filter(p => p.life > 0);
-    particles.forEach(p => { p.update(); p.draw(); });
+    // パーティクルの一括描画
+    particlePool.forEach(p => {
+        if (!p.active) return;
+        p.x += p.vx; p.y += p.vy;
+        p.life -= 0.015;
+        if (p.life <= 0) { p.active = false; return; }
+
+        ctx.fillStyle = `hsla(${p.hue}, 100%, 75%, ${p.life})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+    });
 }
 window.addEventListener('resize', resize);
 </script>
