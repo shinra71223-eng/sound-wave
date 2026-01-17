@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neon Octave v12.6</title>
+    <title>Pure Analyzer v12.7</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; touch-action: none; }
         canvas { display: block; }
@@ -17,30 +17,41 @@
             border: 2px solid #00f2fe; border-radius: 50px; cursor: pointer; font-weight: bold;
         }
         #dashboard {
-            position: absolute; bottom: -120px; left: 50%; transform: translateX(-50%);
-            width: 90%; max-width: 400px; background: rgba(10, 10, 20, 0.9);
-            backdrop-filter: blur(15px); border-radius: 20px 20px 0 0; padding: 15px; transition: 0.4s; z-index: 50;
-            border-top: 1px solid rgba(0, 242, 254, 0.3);
+            position: absolute; bottom: -130px; left: 50%; transform: translateX(-50%);
+            width: 90%; max-width: 400px; background: rgba(10, 10, 25, 0.95);
+            backdrop-filter: blur(20px); border-radius: 20px 20px 0 0; padding: 15px; transition: 0.4s; z-index: 50;
+            border-top: 1px solid rgba(0, 242, 254, 0.4);
         }
         #dashboard.active { bottom: 0; }
         .tab-handle {
-            position: absolute; top: -30px; left: 50%; transform: translateX(-50%);
-            background: rgba(10, 10, 20, 0.9); padding: 5px 20px; border-radius: 10px 10px 0 0;
-            font-size: 10px; color: #00f2fe; cursor: pointer;
+            position: absolute; top: -35px; left: 50%; transform: translateX(-50%);
+            background: rgba(10, 10, 25, 0.95); padding: 5px 25px; border-radius: 12px 12px 0 0;
+            font-size: 11px; color: #00f2fe; cursor: pointer; border: 1px solid rgba(0, 242, 254, 0.4); border-bottom: none;
         }
-        input[type="range"] { width: 100%; accent-color: #00f2fe; }
+        .control-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; font-size: 11px; }
+        .toggle-btn {
+            padding: 6px 12px; font-size: 10px; background: #222; border: 1px solid #444; color: #666; border-radius: 5px; cursor: pointer;
+        }
+        .toggle-btn.active { background: #00f2fe; color: #000; border-color: #00f2fe; font-weight: bold; }
+        input[type="range"] { flex: 1; margin-left: 10px; accent-color: #00f2fe; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">FIXED ENGINE v12.6</button>
+    <button id="startBtn" class="start-btn">LAUNCH PURE ENGINE v12.7</button>
 </div>
 
 <div id="dashboard">
-    <div class="tab-handle" onclick="toggleDash()">CONTROLS ▲</div>
-    <div style="font-size: 10px; color: #555; margin-bottom: 5px;">SENSITIVITY</div>
-    <input type="range" id="sensSlider" min="0.5" max="5.0" step="0.1" value="1.8">
+    <div class="tab-handle" onclick="toggleDash()">DASHBOARD ▲</div>
+    <div class="control-row">
+        <span>A-WEIGHTING (聴感補正)</span>
+        <button id="weightToggle" class="toggle-btn" onclick="toggleWeight()">OFF</button>
+    </div>
+    <div class="control-row">
+        <span>SENSITIVITY</span>
+        <input type="range" id="sensSlider" min="1.0" max="10.0" step="0.1" value="2.5">
+    </div>
 </div>
 
 <canvas id="waveCanvas"></canvas>
@@ -51,9 +62,15 @@ const ctx = canvas.getContext('2d');
 const startBtn = document.getElementById('startBtn');
 
 let audioCtx, analyser, dataArray, sourceNode;
-let isRunning = false, octaveBands = [], maxVolume = 10;
+let isRunning = false, octaveBands = [], useWeight = false;
 
 function toggleDash() { document.getElementById('dashboard').classList.toggle('active'); }
+function toggleWeight() {
+    useWeight = !useWeight;
+    const btn = document.getElementById('weightToggle');
+    btn.innerText = useWeight ? "ON" : "OFF";
+    btn.className = useWeight ? "toggle-btn active" : "toggle-btn";
+}
 
 startBtn.onclick = async () => {
     try {
@@ -63,8 +80,9 @@ startBtn.onclick = async () => {
 
         sourceNode = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 4096; // 安定性重視
-        analyser.smoothingTimeConstant = 0.7;
+        analyser.fftSize = 8192; 
+        // 俊敏な反応のため、スムージングを大幅に下げる(0.7 -> 0.45)
+        analyser.smoothingTimeConstant = 0.45;
         sourceNode.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
         
@@ -91,8 +109,8 @@ function resize() {
 function setupOctaveBands() {
     octaveBands = [];
     const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
-    const fftSize = analyser ? analyser.fftSize : 4096;
-    let currentFreq = 31.5; 
+    const fftSize = 8192;
+    let currentFreq = 20; // 20Hzから開始
     const bandsPerOctave = 3; 
     
     while (currentFreq < sampleRate / 2.2) {
@@ -110,20 +128,14 @@ function animate() {
     requestAnimationFrame(animate);
     analyser.getByteFrequencyData(dataArray);
 
-    let frameMax = 0;
-    for(let i=0; i<dataArray.length; i++) if(dataArray[i] > frameMax) frameMax = dataArray[i];
-    maxVolume = Math.max(frameMax, maxVolume * 0.99, 5);
-    // オートゲインに上限(5.0倍)を設け、ホワイトアウトを防止
-    const autoGain = Math.min(5.0, 240 / maxVolume);
-
-    // 背景消去（残像を適度にコントロール）
+    // 背景描画（より黒を強調）
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = 'rgba(0, 0, 5, 0.35)';
+    ctx.fillStyle = 'rgba(0, 0, 5, 0.4)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const baseY = canvas.height * 0.65;
+    const baseY = canvas.height * 0.7;
     const sens = parseFloat(document.getElementById('sensSlider').value);
-    const barWidth = Math.max(4, (canvas.width / octaveBands.length) * 0.7);
+    const barWidth = Math.max(3, (canvas.width / octaveBands.length) * 0.7);
     const gap = (canvas.width - (barWidth * octaveBands.length)) / (octaveBands.length + 1);
 
     for (let i = 0; i < octaveBands.length; i++) {
@@ -133,41 +145,39 @@ function animate() {
             sum += dataArray[j];
             count++;
         }
-        const avgVal = count > 0 ? sum / count : 0;
+        const rawVal = count > 0 ? sum / count : 0;
         
-        let h = (Math.max(0, avgVal + band.weight) * autoGain * sens);
-        h = (h / 255) * canvas.height * 0.5;
-        h = Math.max(2, Math.min(h, canvas.height * 0.85)); // 数値の安全クランプ
+        // --- 補正の適用 ---
+        let finalVal = rawVal;
+        if (useWeight) {
+            finalVal = Math.max(0, rawVal + band.weight);
+        }
+
+        let h = (finalVal / 255) * canvas.height * 0.8 * sens;
+        h = Math.max(2, Math.min(h, canvas.height * 0.9));
 
         const x = gap + i * (barWidth + gap);
         const relPos = i / octaveBands.length;
-        const hue = 260 + relPos * 70; 
+        const hue = 280 + relPos * 70; 
 
-        // 1. 床面反射（先に描画して奥行きを出す）
-        ctx.globalAlpha = 0.2;
-        const refGrad = ctx.createLinearGradient(x, baseY, x, baseY + h*0.4);
-        refGrad.addColorStop(0, `hsla(${hue}, 100%, 50%, 0.8)`);
-        refGrad.addColorStop(1, `transparent`);
-        ctx.fillStyle = refGrad;
-        ctx.fillRect(x, baseY + 2, barWidth, h * 0.4);
-        ctx.globalAlpha = 1.0;
+        // 床面反射
+        ctx.fillStyle = `hsla(${hue}, 100%, 50%, 0.15)`;
+        ctx.fillRect(x, baseY + 2, barWidth, h * 0.3);
 
-        // 2. メインの光柱
-        const mainGrad = ctx.createLinearGradient(x, baseY - h, x, baseY);
-        mainGrad.addColorStop(0, `hsla(${hue}, 100%, 80%, 0.9)`);
-        mainGrad.addColorStop(1, `hsla(${hue}, 100%, 20%, 0)`);
-        ctx.fillStyle = mainGrad;
+        // メインバー
+        const grd = ctx.createLinearGradient(x, baseY - h, x, baseY);
+        grd.addColorStop(0, `hsla(${hue}, 100%, 85%, 0.9)`);
+        grd.addColorStop(1, `hsla(${hue}, 100%, 30%, 0.1)`);
+        ctx.fillStyle = grd;
         ctx.fillRect(x, baseY - h, barWidth, h);
 
-        // 3. 輝き（ここだけ加算合成を使用して「光」を強調）
-        if (h > 10) {
-            ctx.globalCompositeOperation = 'lighter';
-            ctx.fillStyle = `hsla(${hue}, 100%, 90%, 0.5)`;
-            ctx.beginPath();
-            ctx.arc(x + barWidth/2, baseY - h, barWidth * 0.8, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.globalCompositeOperation = 'source-over';
-        }
+        // 先端の輝き（加算合成）
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = `hsla(${hue}, 100%, 95%, 0.6)`;
+        ctx.beginPath();
+        ctx.arc(x + barWidth/2, baseY - h, barWidth * 0.9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
     }
 }
 window.addEventListener('resize', resize);
