@@ -3,141 +3,72 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Engine v2026.01.17-02</title>
+    <title>Human Ear Engine v2026.01.17-05</title>
     <style>
-        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; }
         canvas { display: block; }
-        
-        /* セレクター画面 */
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: rgba(2, 2, 10, 0.95); z-index: 100; transition: opacity 0.5s;
+            background: rgba(2, 2, 10, 0.95); z-index: 100;
         }
-        .btn-container { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
         .mode-btn {
-            padding: 20px 30px; font-size: 14px; font-weight: bold;
-            background: #111; color: #00d4ff; border: 2px solid #00d4ff;
-            border-radius: 12px; cursor: pointer; transition: 0.3s;
-            display: flex; flex-direction: column; align-items: center; gap: 10px;
+            padding: 15px 30px; font-size: 14px; background: #111; color: #00d4ff; 
+            border: 2px solid #00d4ff; border-radius: 8px; cursor: pointer; margin: 10px;
         }
-        .mode-btn:hover { background: #00d4ff; color: #000; }
-        .mode-btn span { font-size: 10px; opacity: 0.7; }
-
         #monitor {
             position: absolute; top: 15px; left: 15px; font-size: 11px;
             background: rgba(0,0,0,0.7); padding: 12px; border-radius: 8px;
-            border: 1px solid #333; pointer-events: none; line-height: 1.6; z-index: 50;
+            border: 1px solid #333; pointer-events: none; z-index: 50;
         }
-        .active-label { color: #ff007b; font-weight: bold; animation: blink 0.2s infinite; }
-        @keyframes blink { 50% { opacity: 0.5; } }
-        #ver-tag { position: absolute; bottom: 10px; right: 10px; font-size: 9px; color: #444; }
-        
-        /* 隠しファイル入力 */
-        #fileInput { display: none; }
+        #ver-tag { position: absolute; bottom: 5px; right: 5px; font-size: 9px; color: #333; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <h2 style="color: #fff; margin-bottom: 30px; letter-spacing: 2px;">SELECT AUDIO SOURCE</h2>
-    <div class="btn-container">
-        <button class="mode-btn" onclick="startMic()">
-            MIC MODE
-            <span>マイクで周囲の音を拾う</span>
-        </button>
-        <button class="mode-btn" onclick="triggerFileSelect()">
-            FILE MODE
-            <span>スマホ内の音楽ファイルを再生</span>
-        </button>
-    </div>
-    <input type="file" id="fileInput" accept="audio/*">
-    <p style="font-size: 11px; color: #555; margin-top: 30px;">Ver. 2026.01.17-02 / Dual Source System</p>
+    <h2 style="letter-spacing: 2px;">PERCEPTION ENGINE v5</h2>
+    <button class="mode-btn" onclick="startMic()">START MIC MODE</button>
 </div>
 
 <div id="monitor">
-    <div style="color: #00d4ff;">SYSTEM MONITOR</div>
-    SOURCE: <span id="srcType">None</span><br>
-    LOW: <span id="lowVal">0</span> <span id="lowStatus"></span><br>
-    HIGH: <span id="highVal">0</span> <span id="highStatus"></span>
+    <div style="color: #ff007b; margin-bottom: 5px;">HUMAN PERCEPTION: ACTIVE</div>
+    BASS ENERGY: <span id="lowVal">0</span><br>
+    TREBLE SENS: <span id="highVal">0</span>
 </div>
 
-<div id="ver-tag">ENGINE_ID: 2026.01.17-02</div>
-
+<div id="ver-tag">ENGINE_ID: 2026.01.17-05</div>
 <canvas id="waveCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d');
-const fileInput = document.getElementById('fileInput');
-
 let audioCtx, analyser, dataArray, sourceNode;
-let particles = [];
 let isRunning = false;
 let shakeTime = 0;
 
-const config = {
-    barWidth: 2, gap: 1, hueS: 280, hueE: 30,
-    bassThreshold: 180, trebleThreshold: 100  
-};
-
-// マイクモード開始
 async function startMic() {
-    initAudioContext();
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        sourceNode = audioCtx.createMediaStreamSource(stream);
-        setupVisualizer("MICROPHONE");
-    } catch (err) {
-        alert("マイクエラー: " + err);
-    }
-}
-
-// ファイルモード用：隠し入力をクリック
-function triggerFileSelect() {
-    fileInput.click();
-}
-
-// ファイルが選択された時
-fileInput.onchange = function(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    
-    initAudioContext();
-    const reader = new FileReader();
-    reader.onload = function(event) {
-        audioCtx.decodeAudioData(event.target.result, function(buffer) {
-            if (sourceNode) sourceNode.disconnect();
-            sourceNode = audioCtx.createBufferSource();
-            sourceNode.buffer = buffer;
-            sourceNode.loop = true;
-            sourceNode.start(0);
-            setupVisualizer("FILE: " + file.name.substring(0, 10) + "...");
-        });
-    };
-    reader.readAsArrayBuffer(file);
-};
-
-function initAudioContext() {
-    if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 512;
-    }
-}
-
-function setupVisualizer(type) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    sourceNode = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
     sourceNode.connect(analyser);
-    if (type.includes("FILE")) {
-        // ファイル再生の場合は音をスピーカーに出す必要がある
-        analyser.connect(audioCtx.destination);
-    }
     dataArray = new Uint8Array(analyser.frequencyBinCount);
     document.getElementById('overlay').style.display = 'none';
-    document.getElementById('srcType').innerText = type;
     isRunning = true;
     resize();
     animate();
+}
+
+// --- A特性補正（近似計算） ---
+// 周波数 f に基づいてデシベル補正値を返す
+function getAWeighting(f) {
+    if (f <= 0) return -100;
+    const f2 = f * f;
+    const rA = (1486428800 * f2 * f2) / 
+               ((f2 + 424.36) * Math.sqrt((f2 + 11599.29) * (f2 + 544496.41)) * (f2 + 1486428800));
+    return 2.0 + 20 * Math.log10(rA);
 }
 
 function resize() {
@@ -150,81 +81,54 @@ function animate() {
     requestAnimationFrame(animate);
     analyser.getByteFrequencyData(dataArray);
 
-    let bassSum = 0;
-    for(let i=0; i<8; i++) bassSum += dataArray[i];
-    const bassAvg = bassSum / 8;
-
-    let trebleSum = 0;
-    for(let i=150; i<200; i++) trebleSum += dataArray[i];
-    const trebleAvg = trebleSum / 50;
-
-    document.getElementById('lowVal').innerText = Math.floor(bassAvg);
-    document.getElementById('highVal').innerText = Math.floor(trebleAvg);
-
-    let isBassTrigger = bassAvg > config.bassThreshold;
-    let isTrebleTrigger = trebleAvg > config.trebleThreshold;
-    document.getElementById('lowStatus').innerHTML = isBassTrigger ? '<span class="active-label">SHAKE!</span>' : '';
-    document.getElementById('highStatus').innerHTML = isTrebleTrigger ? '<span class="active-label">SPARK!</span>' : '';
-
-    if (isBassTrigger) shakeTime = 8;
+    const sampleRate = audioCtx.sampleRate;
+    const binCount = analyser.frequencyBinCount;
 
     ctx.save();
     if (shakeTime > 0) {
-        ctx.translate((Math.random()-0.5)*15, (Math.random()-0.5)*15);
+        ctx.translate((Math.random()-0.5)*10, (Math.random()-0.5)*10);
         shakeTime--;
     }
 
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = 'rgba(2, 2, 12, 0.25)';
-    ctx.fillRect(-50, -50, canvas.width+100, canvas.height+100);
+    ctx.fillStyle = 'rgba(2, 2, 10, 0.25)';
+    ctx.fillRect(-20, -20, canvas.width+40, canvas.height+40);
 
-    const barCount = Math.floor(canvas.width / (config.barWidth + config.gap));
+    const barCount = Math.floor(canvas.width / 3);
     const baseY = canvas.height * 0.65;
+    const maxIdx = binCount * 0.85;
+
     ctx.globalCompositeOperation = 'lighter';
 
     for (let i = 0; i < barCount; i++) {
         const relX = i / barCount;
-        const x = i * (config.barWidth + config.gap);
-        const dataIdx = Math.floor(relX * dataArray.length * 0.8);
-        const val = dataArray[dataIdx];
-        const h = (val / 255) * canvas.height * 0.65 * Math.sin(relX * Math.PI);
-        const hue = config.hueS + (config.hueE - config.hueS) * relX;
+        const logIdx = Math.floor(1 * Math.pow(maxIdx / 1, relX));
+        const freq = (logIdx * sampleRate) / (analyser.fftSize);
+        
+        let val = dataArray[logIdx];
 
+        // --- 聴感補正の適用 ---
+        const weight = getAWeighting(freq);
+        // デシベルベースの補正を高さに反映
+        // 低音は weight がマイナスに大きくなるため、見た目の高さが抑えられる
+        let perceivedVal = val + weight; 
+        perceivedVal = Math.max(0, perceivedVal);
+
+        const h = (perceivedVal / 255) * canvas.height * 0.7 * Math.sin(relX * Math.PI) + 2;
+        const x = i * 3;
+        const hue = 280 + (30 - 280) * relX;
+
+        // メイン描画
         const grd = ctx.createLinearGradient(x, baseY - h, x, baseY);
-        grd.addColorStop(0, `hsla(${hue}, 100%, 75%, 0.85)`);
+        grd.addColorStop(0, `hsla(${hue}, 100%, 75%, 0.8)`);
         grd.addColorStop(1, `hsla(${hue}, 80%, 30%, 0)`);
         ctx.fillStyle = grd;
-        ctx.fillRect(x, baseY - h, config.barWidth, h);
+        ctx.fillRect(x, baseY - h, 2, h);
 
-        if (isTrebleTrigger && Math.random() > 0.98) {
-            particles.push({
-                x: Math.random() * canvas.width, y: Math.random() * canvas.height,
-                vx: (Math.random()-0.5)*20, vy: (Math.random()-0.5)*20,
-                life: 1.0, color: '#fff', size: 2
-            });
-        }
-        if (val > 210 && Math.random() > 0.9) {
-            particles.push({
-                x: x, y: baseY - h, 
-                vx: (Math.random()-0.5)*2, vy: -Math.random()*4,
-                life: 1.0, color: `hsla(${hue}, 100%, 70%, 1)`, size: 1.5
-            });
-        }
-    }
-
-    for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.x += p.vx; p.y += p.vy; p.life -= 0.02;
-        if (p.life <= 0) { particles.splice(i, 1); continue; }
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = p.life;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-        ctx.fill();
+        // 低音の物理振動判定（補正前の純粋なエネルギーで判定）
+        if (relX < 0.1 && val > 210) shakeTime = 5;
     }
     ctx.restore();
 }
-
 window.addEventListener('resize', resize);
 </script>
 </body>
