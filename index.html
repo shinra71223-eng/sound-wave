@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Signature Art v15.0</title>
+    <title>Raw Art v15.1</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; touch-action: none; }
         canvas { display: block; }
@@ -13,37 +13,37 @@
             background: #000; z-index: 100;
         }
         .start-btn {
-            padding: 18px 45px; font-size: 14px; color: #fff; background: transparent;
-            border: 1px solid rgba(255,255,255,0.4); border-radius: 2px; cursor: pointer; letter-spacing: 3px;
+            padding: 15px 40px; font-size: 14px; color: #00f2fe; background: transparent;
+            border: 1px solid #00f2fe; border-radius: 4px; cursor: pointer; letter-spacing: 2px;
         }
         #ui-layer {
             position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
-            width: 88%; max-width: 400px; z-index: 50; background: rgba(0,0,0,0.7); 
-            padding: 18px; border-radius: 15px; backdrop-filter: blur(15px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            width: 90%; max-width: 400px; background: rgba(10,10,20,0.85); 
+            padding: 15px; border-radius: 12px; backdrop-filter: blur(15px);
+            border: 1px solid rgba(0, 242, 254, 0.3);
         }
-        .engine-selector { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 15px; }
+        .engine-selector { display: flex; gap: 6px; margin-bottom: 12px; }
         .m-btn {
-            flex: 1; padding: 10px; font-size: 10px; background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.15); color: #666; border-radius: 6px;
+            flex: 1; padding: 10px; font-size: 9px; background: #111;
+            border: 1px solid #333; color: #666; border-radius: 6px;
         }
-        .m-btn.active { border-color: #00f2fe; color: #fff; background: rgba(0, 242, 254, 0.15); box-shadow: 0 0 15px rgba(0,242,254,0.3); }
+        .m-btn.active { border-color: #00f2fe; color: #fff; background: rgba(0, 242, 254, 0.2); }
         input[type="range"] { width: 100%; accent-color: #00f2fe; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">ACTIVATE SIGNER v15.0</button>
+    <button id="startBtn" class="start-btn">BOOT RAW ENGINE v15.1</button>
 </div>
 
 <div id="ui-layer">
     <div class="engine-selector">
         <button id="e-pop" class="m-btn active" onclick="setEngine('POP')">VIVID POP</button>
-        <button id="e-voice" class="m-btn" onclick="setEngine('VOICE')">VOCAL FOCUS</button>
-        <button id="e-ambient" class="m-btn" onclick="setEngine('AMBIENT')">AMBIENT</button>
+        <button id="e-voice" class="m-btn" onclick="setEngine('VOICE')">VOCAL</button>
+        <button id="e-raw" class="m-btn" onclick="setEngine('RAW')">TOTAL RAW</button>
     </div>
-    <input type="range" id="sensSlider" min="1" max="15" step="0.1" value="6">
+    <input type="range" id="sensSlider" min="1" max="20" step="0.1" value="8">
 </div>
 
 <canvas id="waveCanvas"></canvas>
@@ -54,39 +54,35 @@ const ctx = canvas.getContext('2d', { alpha: false });
 let audioCtx, analyser, dataArray, isRunning = false;
 let bands = [], currentEngine = 'POP';
 
-// オブジェクト・プーリング
-const MAX_PARTICLES = 500;
-const pPool = Array.from({ length: MAX_PARTICLES }, () => ({ x:0, y:0, vx:0, vy:0, life:0, hue:0, active:false }));
-
-function spawn(x, y, hue, power) {
-    const p = pPool.find(p => !p.active) || pPool[0];
-    p.active = true; p.x = x; p.y = y;
-    p.vx = (Math.random() - 0.5) * 4 * power;
-    p.vy = (Math.random() - 0.5) * 4 * power;
-    p.life = 1.0; p.hue = hue;
-}
-
 function setEngine(e) {
     currentEngine = e;
-    ['POP', 'VOICE', 'AMBIENT'].forEach(m => document.getElementById('e-' + m.toLowerCase()).classList.toggle('active', e === m));
-    if (analyser) {
-        // POPモードは反応性(0.4)、VOICEは安定性(0.7)を優先
-        analyser.smoothingTimeConstant = (e === 'POP') ? 0.45 : 0.75;
-    }
+    ['POP', 'VOICE', 'RAW'].forEach(m => document.getElementById('e-' + m.toLowerCase()).classList.toggle('active', e === m));
 }
 
 document.getElementById('startBtn').onclick = async () => {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // --- 修正ポイント1: 制約の設定 (ブラウザの余計な処理をすべて排除) ---
+        const constraints = {
+            audio: {
+                echoCancellation: false,  // エコー除去OFF
+                noiseSuppression: false, // ノイズ抑制OFF
+                autoGainControl: false   // 自動ゲイン制御OFF
+            }
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const source = audioCtx.createMediaStreamSource(stream);
+        
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048; 
+        analyser.fftSize = 4096; // --- 修正ポイント2: 解像度を2倍に ---
+        analyser.smoothingTimeConstant = 0.5;
         source.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
+
         document.getElementById('overlay').style.display = 'none';
         isRunning = true; resize(); animate();
-    } catch (err) { alert(err); }
+    } catch (err) { alert("Audio Input Error: " + err); }
 };
 
 function resize() {
@@ -96,14 +92,23 @@ function resize() {
 
 function setupBands() {
     bands = [];
+    const sampleRate = audioCtx ? audioCtx.sampleRate : 48000;
+    const fftBinCount = 2048; // fftSize / 2
+    
+    let lastEndIdx = 1;
     let freq = 20;
-    const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
-    // バンドの細かさを改善 (1/6 オクターブに近いステップ)
-    while (freq < 16000) {
-        const start = Math.floor(freq * 2048 / sampleRate);
-        const end = Math.ceil(freq * 1.2 * 2048 / sampleRate);
-        bands.push({ freq, start, end });
-        freq *= 1.22;
+    
+    // --- 修正ポイント3: 漏れのないバンド生成 (Gapless Mapping) ---
+    while (freq < 18000) {
+        let nextFreq = freq * 1.18;
+        let startIdx = lastEndIdx;
+        let endIdx = Math.max(startIdx + 1, Math.floor(nextFreq * 4096 / sampleRate));
+        
+        if (startIdx >= fftBinCount) break;
+        
+        bands.push({ freq, start: startIdx, end: Math.min(endIdx, fftBinCount - 1) });
+        lastEndIdx = endIdx;
+        freq = nextFreq;
     }
 }
 
@@ -114,7 +119,7 @@ function animate() {
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = '#000008';
-    ctx.globalAlpha = 0.22; 
+    ctx.globalAlpha = 0.25; 
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 1.0;
 
@@ -125,49 +130,42 @@ function animate() {
     ctx.globalCompositeOperation = 'lighter';
 
     bands.forEach((b, i) => {
-        // --- 楽曲最適化: 帯域内の最大エネルギーを追跡 ---
+        // バンド内の最大エネルギーを確実に拾う
         let peak = 0;
-        for (let j = b.start; j <= b.end; j++) if (dataArray[j] > peak) peak = dataArray[j];
+        for (let j = b.start; j <= b.end; j++) {
+            if (dataArray[j] > peak) peak = dataArray[j];
+        }
         
-        // --- インテリジェント・ブースト ---
-        let mod = 1.0;
+        // --- 修正ポイント4: 周波数特性のフラット化 (Pre-emphasis) ---
+        // 高音域(女性の声など)は物理的にエネルギーが小さいため補正を加える
+        let boost = 1.0;
         if (currentEngine === 'POP') {
-            // 低域(キック)と女性ボーカル帯域(2k-5k)を強化
-            if (b.freq < 120) mod = 1.5;
-            else if (b.freq > 2000 && b.freq < 5000) mod = 2.2; 
+            if (b.freq > 2000) boost = 1.5 + (b.freq / 10000); // 高域ほどブースト
         } else if (currentEngine === 'VOICE') {
-            mod = (b.freq > 200 && b.freq < 4500) ? 2.0 : 0.3;
+            boost = (b.freq > 300 && b.freq < 5000) ? 2.5 : 0.2;
         }
 
-        // 対数圧縮スケーリング (爆音時でも破綻させない)
-        let level = (peak / 255) * mod * sens;
-        let h = Math.log1p(level) * canvas.height * 0.15;
-        h = Math.max(2, Math.min(h, canvas.height * 0.45));
+        let val = (peak / 255) * boost * sens;
+        // 小さな音を感動的に見せるための非線形変換
+        let h = Math.sqrt(val) * canvas.height * 0.12; 
+        h = Math.max(1, Math.min(h, canvas.height * 0.45));
 
         const x = spacing + i * spacing;
-        const hue = (currentEngine === 'POP') ? 220 + (i * 4) : (currentEngine === 'VOICE' ? 10 + (i * 3) : 180);
+        const hue = 200 + (i / bands.length) * 120; // プリズムカラー
 
-        if (h > 10) {
-            const opacity = Math.min(0.8, h / 200);
-            ctx.fillStyle = `hsla(${hue}, 100%, 70%, ${opacity})`;
+        if (h > 5) {
+            const opacity = Math.min(0.9, h / 150);
+            ctx.fillStyle = `hsla(${hue}, 100%, 65%, ${opacity})`;
             ctx.beginPath();
-            ctx.ellipse(x, centerY, Math.max(2, h*0.05), h, 0, 0, Math.PI * 2);
+            ctx.ellipse(x, centerY, Math.max(1.5, h * 0.04), h, 0, 0, Math.PI * 2);
             ctx.fill();
-
-            // パーティクルの発生条件を「瞬発的なエネルギー」に同期
-            if (peak > 200 && Math.random() > 0.8) {
-                spawn(x, centerY - h, hue, level * 0.1);
-                spawn(x, centerY + h, hue, level * 0.1);
-            }
+            
+            // 頂点の光
+            ctx.fillStyle = `hsla(${hue}, 100%, 90%, ${opacity * 0.8})`;
+            ctx.beginPath();
+            ctx.arc(x, centerY - h, 2, 0, 7); ctx.arc(x, centerY + h, 2, 0, 7);
+            ctx.fill();
         }
-    });
-
-    pPool.forEach(p => {
-        if (!p.active) return;
-        p.x += p.vx; p.y += p.vy; p.life -= 0.02;
-        if (p.life <= 0) { p.active = false; return; }
-        ctx.fillStyle = `hsla(${p.hue}, 100%, 80%, ${p.life})`;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 1.5, 0, 7); ctx.fill();
     });
 }
 window.addEventListener('resize', resize);
