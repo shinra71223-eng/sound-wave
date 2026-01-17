@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Raw Art v15.1</title>
+    <title>Deep Silence v15.2</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; touch-action: none; }
         canvas { display: block; }
@@ -34,7 +34,7 @@
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">BOOT RAW ENGINE v15.1</button>
+    <button id="startBtn" class="start-btn">BOOT ENGINE v15.2</button>
 </div>
 
 <div id="ui-layer">
@@ -43,7 +43,7 @@
         <button id="e-voice" class="m-btn" onclick="setEngine('VOICE')">VOCAL</button>
         <button id="e-raw" class="m-btn" onclick="setEngine('RAW')">TOTAL RAW</button>
     </div>
-    <input type="range" id="sensSlider" min="1" max="20" step="0.1" value="8">
+    <input type="range" id="sensSlider" min="1" max="25" step="0.1" value="10">
 </div>
 
 <canvas id="waveCanvas"></canvas>
@@ -61,13 +61,8 @@ function setEngine(e) {
 
 document.getElementById('startBtn').onclick = async () => {
     try {
-        // --- 修正ポイント1: 制約の設定 (ブラウザの余計な処理をすべて排除) ---
         const constraints = {
-            audio: {
-                echoCancellation: false,  // エコー除去OFF
-                noiseSuppression: false, // ノイズ抑制OFF
-                autoGainControl: false   // 自動ゲイン制御OFF
-            }
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
         };
 
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -75,14 +70,14 @@ document.getElementById('startBtn').onclick = async () => {
         const source = audioCtx.createMediaStreamSource(stream);
         
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 4096; // --- 修正ポイント2: 解像度を2倍に ---
+        analyser.fftSize = 4096;
         analyser.smoothingTimeConstant = 0.5;
         source.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
 
         document.getElementById('overlay').style.display = 'none';
         isRunning = true; resize(); animate();
-    } catch (err) { alert("Audio Input Error: " + err); }
+    } catch (err) { alert("Audio Error: " + err); }
 };
 
 function resize() {
@@ -93,19 +88,17 @@ function resize() {
 function setupBands() {
     bands = [];
     const sampleRate = audioCtx ? audioCtx.sampleRate : 48000;
-    const fftBinCount = 2048; // fftSize / 2
+    const fftBinCount = 2048;
     
-    let lastEndIdx = 1;
-    let freq = 20;
+    // DCオフセット回避のため、bin 2 (約23Hz以上) から開始
+    let lastEndIdx = 2;
+    let freq = 25;
     
-    // --- 修正ポイント3: 漏れのないバンド生成 (Gapless Mapping) ---
     while (freq < 18000) {
         let nextFreq = freq * 1.18;
         let startIdx = lastEndIdx;
         let endIdx = Math.max(startIdx + 1, Math.floor(nextFreq * 4096 / sampleRate));
-        
         if (startIdx >= fftBinCount) break;
-        
         bands.push({ freq, start: startIdx, end: Math.min(endIdx, fftBinCount - 1) });
         lastEndIdx = endIdx;
         freq = nextFreq;
@@ -129,41 +122,47 @@ function animate() {
 
     ctx.globalCompositeOperation = 'lighter';
 
+    // ノイズ除去のしきい値 (0-255)
+    // 10〜20程度に設定すると、静寂時のゴーストが消えます
+    const noiseFloor = 18;
+
     bands.forEach((b, i) => {
-        // バンド内の最大エネルギーを確実に拾う
         let peak = 0;
         for (let j = b.start; j <= b.end; j++) {
             if (dataArray[j] > peak) peak = dataArray[j];
         }
         
-        // --- 修正ポイント4: 周波数特性のフラット化 (Pre-emphasis) ---
-        // 高音域(女性の声など)は物理的にエネルギーが小さいため補正を加える
+        // --- 修正の要: ノイズフロアの除去 ---
+        // peakがしきい値以下の場合は 0 にする
+        let cleanPeak = Math.max(0, peak - noiseFloor);
+        
         let boost = 1.0;
         if (currentEngine === 'POP') {
-            if (b.freq > 2000) boost = 1.5 + (b.freq / 10000); // 高域ほどブースト
+            if (b.freq > 2000) boost = 1.5 + (b.freq / 10000);
         } else if (currentEngine === 'VOICE') {
             boost = (b.freq > 300 && b.freq < 5000) ? 2.5 : 0.2;
         }
 
-        let val = (peak / 255) * boost * sens;
-        // 小さな音を感動的に見せるための非線形変換
-        let h = Math.sqrt(val) * canvas.height * 0.12; 
-        h = Math.max(1, Math.min(h, canvas.height * 0.45));
+        let val = (cleanPeak / 255) * boost * sens;
+        
+        // スケーリング関数の微調整 (低域の過敏さを抑える)
+        let h = Math.pow(val, 0.7) * canvas.height * 0.2; 
+        h = Math.max(0, Math.min(h, canvas.height * 0.45));
 
         const x = spacing + i * spacing;
-        const hue = 200 + (i / bands.length) * 120; // プリズムカラー
+        const hue = 200 + (i / bands.length) * 120;
 
-        if (h > 5) {
-            const opacity = Math.min(0.9, h / 150);
+        if (h > 2) {
+            const opacity = Math.min(0.9, h / 100);
             ctx.fillStyle = `hsla(${hue}, 100%, 65%, ${opacity})`;
             ctx.beginPath();
-            ctx.ellipse(x, centerY, Math.max(1.5, h * 0.04), h, 0, 0, Math.PI * 2);
+            ctx.ellipse(x, centerY, Math.max(1.2, h * 0.04), h, 0, 0, Math.PI * 2);
             ctx.fill();
             
-            // 頂点の光
             ctx.fillStyle = `hsla(${hue}, 100%, 90%, ${opacity * 0.8})`;
             ctx.beginPath();
-            ctx.arc(x, centerY - h, 2, 0, 7); ctx.arc(x, centerY + h, 2, 0, 7);
+            ctx.arc(x, centerY - h, 1.5, 0, 7); 
+            ctx.arc(x, centerY + h, 1.5, 0, 7);
             ctx.fill();
         }
     });
