@@ -3,30 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>High-Res Engine v2026.01.17-07</title>
+    <title>RAW Analyzer v11</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; }
         canvas { display: block; }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: rgba(2, 2, 10, 0.95); z-index: 100;
+            background: rgba(0, 0, 5, 0.95); z-index: 100;
         }
         .mode-btn {
-            padding: 15px 30px; background: #111; color: #00d4ff; 
-            border: 2px solid #00d4ff; border-radius: 8px; cursor: pointer;
+            padding: 15px 40px; background: transparent; color: #00f2fe; 
+            border: 2px solid #00f2fe; border-radius: 50px; cursor: pointer; font-weight: bold;
+            font-size: 16px; box-shadow: 0 0 15px rgba(0, 242, 254, 0.2);
         }
-        #ver-tag { position: absolute; bottom: 5px; right: 5px; font-size: 9px; color: #333; }
+        #monitor {
+            position: absolute; top: 10px; left: 10px; font-size: 10px; color: #444;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <h2 style="letter-spacing: 2px;">HIGH-RES LOG ENGINE v7</h2>
-    <button class="mode-btn" onclick="startMic()">START MIC (FFT-8192)</button>
+    <button class="mode-btn" onclick="startMic()">START ANALYZER</button>
 </div>
 
-<div id="ver-tag">ENGINE_ID: 2026.01.17-07</div>
+<div id="monitor">RAW_MODE: 16384 FFT / A-WEIGHTED</div>
+
 <canvas id="waveCanvas"></canvas>
 
 <script>
@@ -34,37 +38,47 @@ const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d');
 let audioCtx, analyser, dataArray, sourceNode;
 let isRunning = false;
+let barMapping = [];
 
 async function startMic() {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    sourceNode = audioCtx.createMediaStreamSource(stream);
-    analyser = audioCtx.createAnalyser();
-    
-    // fftSizeを最大級の8192に設定 (16384も可能ですがスマホの負荷を考慮)
-    analyser.fftSize = 8192; 
-    analyser.smoothingTimeConstant = 0.8; 
-
-    sourceNode.connect(analyser);
-    dataArray = new Uint8Array(analyser.frequencyBinCount);
-    document.getElementById('overlay').style.display = 'none';
-    isRunning = true;
-    resize();
-    animate();
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        sourceNode = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 16384; 
+        analyser.smoothingTimeConstant = 0.65; 
+        sourceNode.connect(analyser);
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+        document.getElementById('overlay').style.display = 'none';
+        isRunning = true;
+        resize();
+        animate();
+    } catch (err) { alert("Mic Error: " + err); }
 }
 
-// A特性聴感補正
 function getAWeighting(f) {
-    if (f <= 0) return -100;
+    if (f <= 20) return -50;
     const f2 = f * f;
-    const rA = (12194 * 12194 * f2 * f2) / 
-               ((f2 + 20.6*20.6) * Math.sqrt((f2 + 107.7*107.7) * (f2 + 737.9*737.9)) * (f2 + 12194*12194));
-    return 2.0 + 20 * Math.log10(rA);
+    const rA = (12194 ** 2 * f2 ** 2) / ((f2 + 20.6 ** 2) * Math.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2)) * (f2 + 12194 ** 2));
+    return 20 * Math.log10(rA) + 2.0;
 }
 
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
+    const barWidth = 3;
+    const barCount = Math.floor(canvas.width / barWidth);
+    const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
+    const minFreq = 20, maxFreq = (sampleRate / 2) * 0.7;
+    
+    barMapping = [];
+    for (let i = 0; i < barCount; i++) {
+        const f = minFreq * Math.pow(maxFreq / minFreq, i / barCount);
+        const binIdx = Math.round((f * 16384) / sampleRate);
+        const hue = 280 + (30 - 280) * (i / barCount);
+        barMapping.push({ binIdx, weight: getAWeighting(f), x: i * barWidth, color: `hsla(${hue}, 100%, 75%, 0.8)` });
+    }
 }
 
 function animate() {
@@ -72,59 +86,20 @@ function animate() {
     requestAnimationFrame(animate);
     analyser.getByteFrequencyData(dataArray);
 
-    ctx.fillStyle = 'rgba(2, 2, 12, 0.2)';
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(0, 0, 8, 0.3)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const barWidth = 3;
-    const barCount = Math.floor(canvas.width / barWidth);
-    const baseY = canvas.height * 0.65;
-    const sampleRate = audioCtx.sampleRate;
-    const binCount = dataArray.length;
-
-    // 表示範囲の周波数設定
-    const minFreq = 20; 
-    const maxFreq = sampleRate / 2 * 0.7; // 聴感上の上限付近
-
+    const baseY = canvas.height * 0.7;
     ctx.globalCompositeOperation = 'lighter';
 
-    for (let i = 0; i < barCount; i++) {
-        // 現在のバーの開始・終了周波数を対数スケールで計算
-        const fStart = minFreq * Math.pow(maxFreq / minFreq, i / barCount);
-        const fEnd = minFreq * Math.pow(maxFreq / minFreq, (i + 1) / barCount);
-        
-        // 周波数をbinインデックスに変換
-        const idxStart = Math.floor(fStart * analyser.fftSize / sampleRate);
-        const idxEnd = Math.ceil(fEnd * analyser.fftSize / sampleRate);
-
-        // --- ログ・リサンプリング (範囲内のbinの平均をとる) ---
-        let totalVal = 0;
-        let count = 0;
-        for (let j = idxStart; j <= idxEnd; j++) {
-            totalVal += dataArray[j];
-            count++;
-        }
-        
-        // binが一つもない場合の補間（超低音域用）
-        let val;
-        if (count > 0) {
-            val = totalVal / count;
-        } else {
-            val = dataArray[idxStart] || 0;
-        }
-
-        // 聴感補正
-        const avgFreq = (fStart + fEnd) / 2;
-        const weight = getAWeighting(avgFreq);
-        let perceivedVal = Math.max(0, val + weight);
-
-        const h = (perceivedVal / 255) * canvas.height * 0.75 * Math.sin((i / barCount) * Math.PI) + 2;
-        const hue = 280 + (30 - 280) * (i / barCount);
-
-        const grd = ctx.createLinearGradient(i * barWidth, baseY - h, i * barWidth, baseY);
-        grd.addColorStop(0, `hsla(${hue}, 100%, 75%, 0.8)`);
-        grd.addColorStop(1, `hsla(${hue}, 80%, 30%, 0)`);
-        ctx.fillStyle = grd;
-        ctx.fillRect(i * barWidth, baseY - h, barWidth - 1, h);
+    for (let i = 0; i < barMapping.length; i++) {
+        const m = barMapping[i];
+        const val = dataArray[m.binIdx] || 0;
+        // 日常音の微細な変化を見やすくするため、増幅率を0.8に微増
+        const h = Math.max(2, (val + m.weight) / 255 * canvas.height * 0.8 * Math.sin((i / barMapping.length) * Math.PI));
+        ctx.fillStyle = m.color;
+        ctx.fillRect(m.x, baseY - h, 2, h);
     }
 }
 window.addEventListener('resize', resize);
