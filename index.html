@@ -3,51 +3,48 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neon RAW v12.3</title>
+    <title>Cinematic Octave v12.5</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; touch-action: none; }
         canvas { display: block; }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: #000; z-index: 100;
+            background: radial-gradient(circle at center, #111 0%, #000 100%); z-index: 100;
         }
         .start-btn {
-            padding: 20px 40px; font-size: 18px; color: #00f2fe; background: transparent;
+            padding: 20px 50px; font-size: 18px; color: #00f2fe; background: rgba(0, 242, 254, 0.1);
             border: 2px solid #00f2fe; border-radius: 50px; cursor: pointer; font-weight: bold;
-            box-shadow: 0 0 15px rgba(0, 242, 254, 0.4);
+            box-shadow: 0 0 30px rgba(0, 242, 254, 0.3); transition: transform 0.2s;
         }
+        .start-btn:active { transform: scale(0.95); }
+        
         #dashboard {
             position: absolute; bottom: -120px; left: 50%; transform: translateX(-50%);
-            width: 90%; max-width: 400px; background: rgba(10, 10, 25, 0.9);
-            border-radius: 20px 20px 0 0; padding: 15px; transition: 0.4s; z-index: 50;
+            width: 90%; max-width: 400px; background: rgba(20, 20, 35, 0.8);
+            backdrop-filter: blur(20px); border-radius: 20px 20px 0 0; padding: 15px; transition: 0.4s; z-index: 50;
+            border-top: 1px solid rgba(255,255,255,0.1);
         }
         #dashboard.active { bottom: 0; }
         .tab-handle {
             position: absolute; top: -30px; left: 50%; transform: translateX(-50%);
-            background: rgba(10, 10, 25, 0.9); padding: 5px 20px; border-radius: 10px 10px 0 0;
+            background: rgba(20, 20, 35, 0.8); padding: 5px 20px; border-radius: 10px 10px 0 0;
             font-size: 10px; color: #00f2fe; cursor: pointer;
         }
-        .mode-row { display: flex; gap: 8px; margin-bottom: 10px; }
-        .mode-btn { flex: 1; padding: 8px; font-size: 10px; background: #222; border: 1px solid #444; color: #888; border-radius: 5px; }
-        .mode-btn.active { border-color: #00f2fe; color: #00f2fe; }
+        .slider-container { display: flex; align-items: center; gap: 10px; font-size: 10px; color: #888; }
+        input[type="range"] { flex: 1; accent-color: #00f2fe; height: 4px; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">LAUNCH RAW ENGINE v12.3</button>
+    <button id="startBtn" class="start-btn">LAUNCH CINEMATIC ENGINE v12.5</button>
 </div>
 
 <div id="dashboard">
-    <div class="tab-handle" onclick="toggleDash()">DASHBOARD ▲</div>
-    <div class="mode-row">
-        <button id="btn-art" class="mode-btn active" onclick="setMode('ART')">ART</button>
-        <button id="btn-raw" class="mode-btn" onclick="setMode('RAW')">RAW</button>
-        <button id="btn-voice" class="mode-btn" onclick="setMode('VOICE')">VOICE</button>
-    </div>
-    <div style="display:flex; align-items:center; gap:10px; font-size:10px; color:#555;">
-        SENSITIVITY <input type="range" id="sensSlider" min="0.5" max="5.0" step="0.1" value="1.5" style="flex:1;">
+    <div class="tab-handle" onclick="toggleDash()">CONTROLS ▲</div>
+    <div class="slider-container">
+        INTENSITY <input type="range" id="sensSlider" min="0.5" max="4.0" step="0.1" value="1.8">
     </div>
 </div>
 
@@ -59,14 +56,9 @@ const ctx = canvas.getContext('2d');
 const startBtn = document.getElementById('startBtn');
 
 let audioCtx, analyser, dataArray, sourceNode;
-let isRunning = false, currentMode = 'ART', barMapping = [], maxVolume = 20;
+let isRunning = false, octaveBands = [], maxVolume = 20;
 
 function toggleDash() { document.getElementById('dashboard').classList.toggle('active'); }
-function setMode(m) {
-    currentMode = m;
-    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('btn-' + m.toLowerCase()).classList.add('active');
-}
 
 startBtn.onclick = async () => {
     try {
@@ -76,19 +68,21 @@ startBtn.onclick = async () => {
 
         sourceNode = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 8192; // 低域解像度を確保
-        analyser.smoothingTimeConstant = 0.5; // レスポンス重視
+        // 高解像度解析を維持
+        analyser.fftSize = 8192; 
+        analyser.smoothingTimeConstant = 0.7;
         sourceNode.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
         
-        document.getElementById('overlay').style.display = 'none';
+        document.getElementById('overlay').style.opacity = 0;
+        setTimeout(()=>document.getElementById('overlay').style.display='none', 500);
         isRunning = true;
         resize();
         animate();
     } catch (err) { alert("Error: " + err); }
 };
 
-// 聴感補正
+// 聴感補正(A-Weighting)
 function getAWeighting(f) {
     if (f <= 20) return -50;
     const f2 = f * f;
@@ -99,24 +93,39 @@ function getAWeighting(f) {
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    barMapping = [];
-    const barW = 3;
-    const barCount = Math.floor(canvas.width / barW);
-    const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
+    setupOctaveBands();
+}
 
-    for (let i = 0; i < barCount; i++) {
-        // --- 1対1 マッピング・ロジック ---
-        // 補間を使わず、インデックスを1つずつ進める (低音域重視)
-        const binIdx = i + 1; 
-        const f = binIdx * sampleRate / 8192;
-        const hue = 280 + (40 - 280) * (i / barCount);
+// オクターブバンドのマッピング設定（重要）
+function setupOctaveBands() {
+    octaveBands = [];
+    const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
+    const fftSize = analyser ? analyser.fftSize : 8192;
+    
+    // ISO標準の1/3オクターブ中心周波数付近をターゲットにする
+    // 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500...
+    const baseFreq = 31.5; 
+    const bandsPerOctave = 3; // 1/3オクターブ分割
+    
+    let currentFreq = baseFreq;
+    while (currentFreq < sampleRate / 2.2) {
+        // バンドの範囲を計算
+        const fLower = currentFreq / Math.pow(2, 1 / (2 * bandsPerOctave));
+        const fUpper = currentFreq * Math.pow(2, 1 / (2 * bandsPerOctave));
         
-        barMapping.push({ 
-            binIdx, 
-            weight: getAWeighting(f), 
-            x: i * barW, 
-            hue 
+        // 対応するFFT binの範囲を取得
+        const idxStart = Math.max(1, Math.floor(fLower * fftSize / sampleRate));
+        const idxEnd = Math.ceil(fUpper * fftSize / sampleRate);
+        
+        octaveBands.push({
+            freq: currentFreq,
+            idxStart: idxStart,
+            idxEnd: idxEnd,
+            weight: getAWeighting(currentFreq)
         });
+
+        // 次の中心周波数へ
+        currentFreq *= Math.pow(2, 1 / bandsPerOctave);
     }
 }
 
@@ -125,46 +134,91 @@ function animate() {
     requestAnimationFrame(animate);
     analyser.getByteFrequencyData(dataArray);
 
+    // オートゲイン計算
     let frameMax = 0;
     for(let i=0; i<dataArray.length; i++) if(dataArray[i] > frameMax) frameMax = dataArray[i];
-    maxVolume = Math.max(frameMax, maxVolume * 0.99, 10);
+    maxVolume = Math.max(frameMax, maxVolume * 0.985, 15);
     const autoGain = 250 / maxVolume;
 
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = 'rgba(0, 0, 8, 0.3)';
+    // 背景（深い宇宙のようなグラデーション）
+    const bgGrad = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 0, canvas.width/2, canvas.height/2, canvas.height);
+    bgGrad.addColorStop(0, '#0a0a15');
+    bgGrad.addColorStop(1, '#000000');
+    ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const baseY = canvas.height * 0.7, sens = parseFloat(document.getElementById('sensSlider').value);
-    ctx.globalCompositeOperation = 'lighter';
+    const baseY = canvas.height * 0.65;
+    const sens = parseFloat(document.getElementById('sensSlider').value);
+    
+    // 表示するバーの設定
+    const totalBands = octaveBands.length;
+    // 画面幅に合わせてバーの太さを調整（最低4px）
+    const barWidth = Math.max(4, (canvas.width / totalBands) * 0.7);
+    const gap = (canvas.width - (barWidth * totalBands)) / (totalBands + 1);
 
-    for (let i = 0; i < barMapping.length; i++) {
-        const m = barMapping[i];
+    ctx.globalCompositeOperation = 'lighter'; // 発光モード
+
+    for (let i = 0; i < totalBands; i++) {
+        const band = octaveBands[i];
         
-        // --- 補間なし: 該当するbinの値を直接取得 ---
-        const rawVal = dataArray[m.binIdx] || 0;
-        
-        let h;
-        if (currentMode === 'RAW') {
-            h = (rawVal / 255) * canvas.height * 0.6 * sens;
-        } else {
-            // ART/VOICE: 聴感補正とゲインを適用
-            let pVal = (rawVal + m.weight) * (currentMode === 'VOICE' ? autoGain : 1.3);
-            h = (Math.max(0, pVal) / 255) * canvas.height * 0.7 * sens;
+        // --- 高解像度データの集計（バンド内の平均エネルギーを計算） ---
+        let sum = 0;
+        let count = 0;
+        for (let j = band.idxStart; j <= band.idxEnd; j++) {
+            sum += dataArray[j];
+            count++;
         }
+        const avgVal = count > 0 ? sum / count : 0;
+        
+        // 高さの計算（聴感補正 + オートゲイン + ユーザー感度）
+        let h = (Math.max(0, avgVal + band.weight) * autoGain * sens);
+        h = (h / 255) * canvas.height * 0.5;
+        h = Math.min(h, canvas.height * 0.8); // 安全装置
 
-        // 表示の安全制限
-        h = Math.max(2, Math.min(h, canvas.height * 0.9));
+        const x = gap + i * (barWidth + gap);
+        const relPos = i / totalBands; // 0.0(低音) ~ 1.0(高音)
+        
+        // 色の動的変化（低音は青紫、高音はシアン〜白）
+        const hue = 260 + relPos * 60; 
+        const saturation = 80 + relPos * 20;
+        const lightness = 50 + h/canvas.height * 40; // 音が大きいほど明るく
 
-        // 描画
-        const grd = ctx.createLinearGradient(m.x, baseY - h, m.x, baseY);
-        grd.addColorStop(0, `hsla(${m.hue}, 100%, 80%, 0.8)`);
-        grd.addColorStop(1, `hsla(${m.hue}, 80%, 30%, 0)`);
-        ctx.fillStyle = grd;
-        ctx.fillRect(m.x, baseY - h, 2, h);
+        // --- 映像美の追求 ---
 
-        if (currentMode === 'ART' && h > 20) {
-            ctx.fillStyle = `hsla(${m.hue}, 100%, 95%, 0.5)`;
-            ctx.beginPath(); ctx.arc(m.x + 1, baseY - h, 2.5, 0, 7); ctx.fill();
+        // 1. メインの光柱（多重グラデーションでリッチに）
+        const mainGrad = ctx.createLinearGradient(x, baseY - h, x, baseY);
+        mainGrad.addColorStop(0, `hsla(${hue}, ${saturation}%, ${lightness+20}%, 0.9)`); // 先端は明るく
+        mainGrad.addColorStop(0.3, `hsla(${hue}, ${saturation}%, ${lightness}%, 0.8)`);
+        mainGrad.addColorStop(1, `hsla(${hue}, ${saturation}%, 20%, 0)`); // 根元は暗く消える
+        
+        // 柱の描画（角を丸くして洗練させる）
+        ctx.beginPath();
+        ctx.roundRect(x, baseY - h, barWidth, h + 10, 4); // 少し下にはみ出させて接地感を出す
+        ctx.fillStyle = mainGrad;
+        ctx.fill();
+
+        if (h > 5) {
+            // 2. 先端の強い輝き（ブルーム）
+            ctx.shadowColor = `hsla(${hue}, 100%, 80%, 1)`;
+            ctx.shadowBlur = 15;
+            ctx.fillStyle = `hsla(${hue}, 100%, 95%, 0.8)`;
+            ctx.beginPath();
+            ctx.roundRect(x, baseY - h - 2, barWidth, 4, 2);
+            ctx.fill();
+            ctx.shadowBlur = 0; // リセット
+
+            // 3. 床面への反射（リフレクション）
+            ctx.save();
+            ctx.scale(1, -1); // 上下反転
+            const reflectGrad = ctx.createLinearGradient(x, -baseY, x, -baseY + h*0.5);
+            reflectGrad.addColorStop(0, `hsla(${hue}, ${saturation}%, ${lightness}%, 0.3)`); // 透明度を下げる
+            reflectGrad.addColorStop(1, `hsla(${hue}, ${saturation}%, 10%, 0)`);
+            ctx.beginPath();
+            // 反射は少しぼかして短く
+            ctx.roundRect(x, -baseY + 2, barWidth, h * 0.5, 4); 
+            ctx.fillStyle = reflectGrad;
+            ctx.fill();
+            ctx.restore();
         }
     }
 }
