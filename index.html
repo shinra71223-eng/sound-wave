@@ -3,86 +3,141 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Engine v2026.01.17-01</title>
+    <title>Audio Engine v2026.01.17-02</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
         canvas { display: block; }
+        
+        /* セレクター画面 */
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: rgba(0,0,0,0.9); z-index: 100; transition: opacity 0.5s;
+            background: rgba(2, 2, 10, 0.95); z-index: 100; transition: opacity 0.5s;
         }
-        button {
-            padding: 18px 45px; font-size: 16px; font-weight: bold;
-            background: linear-gradient(45deg, #00f2fe, #4facfe);
-            color: white; border: none; border-radius: 50px; cursor: pointer;
-            box-shadow: 0 0 15px rgba(79, 172, 254, 0.4);
+        .btn-container { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+        .mode-btn {
+            padding: 20px 30px; font-size: 14px; font-weight: bold;
+            background: #111; color: #00d4ff; border: 2px solid #00d4ff;
+            border-radius: 12px; cursor: pointer; transition: 0.3s;
+            display: flex; flex-direction: column; align-items: center; gap: 10px;
         }
+        .mode-btn:hover { background: #00d4ff; color: #000; }
+        .mode-btn span { font-size: 10px; opacity: 0.7; }
+
         #monitor {
             position: absolute; top: 15px; left: 15px; font-size: 11px;
             background: rgba(0,0,0,0.7); padding: 12px; border-radius: 8px;
-            border: 1px solid #333; pointer-events: none; line-height: 1.6;
+            border: 1px solid #333; pointer-events: none; line-height: 1.6; z-index: 50;
         }
         .active-label { color: #ff007b; font-weight: bold; animation: blink 0.2s infinite; }
         @keyframes blink { 50% { opacity: 0.5; } }
         #ver-tag { position: absolute; bottom: 10px; right: 10px; font-size: 9px; color: #444; }
+        
+        /* 隠しファイル入力 */
+        #fileInput { display: none; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <button id="startBtn">START ENGINE (v2026.01.17-01)</button>
-    <p style="font-size: 11px; color: #666; margin-top: 15px;">マイク許可が必要です</p>
+    <h2 style="color: #fff; margin-bottom: 30px; letter-spacing: 2px;">SELECT AUDIO SOURCE</h2>
+    <div class="btn-container">
+        <button class="mode-btn" onclick="startMic()">
+            MIC MODE
+            <span>マイクで周囲の音を拾う</span>
+        </button>
+        <button class="mode-btn" onclick="triggerFileSelect()">
+            FILE MODE
+            <span>スマホ内の音楽ファイルを再生</span>
+        </button>
+    </div>
+    <input type="file" id="fileInput" accept="audio/*">
+    <p style="font-size: 11px; color: #555; margin-top: 30px;">Ver. 2026.01.17-02 / Dual Source System</p>
 </div>
 
 <div id="monitor">
     <div style="color: #00d4ff;">SYSTEM MONITOR</div>
-    LOW (0-10Hz Avg): <span id="lowVal">0</span> <span id="lowStatus"></span><br>
-    HIGH (150-200Hz Avg): <span id="highVal">0</span> <span id="highStatus"></span>
+    SOURCE: <span id="srcType">None</span><br>
+    LOW: <span id="lowVal">0</span> <span id="lowStatus"></span><br>
+    HIGH: <span id="highVal">0</span> <span id="highStatus"></span>
 </div>
 
-<div id="ver-tag">ENGINE_ID: 2026.01.17-01</div>
+<div id="ver-tag">ENGINE_ID: 2026.01.17-02</div>
 
 <canvas id="waveCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d');
-const startBtn = document.getElementById('startBtn');
+const fileInput = document.getElementById('fileInput');
 
-let audioCtx, analyser, dataArray;
+let audioCtx, analyser, dataArray, sourceNode;
 let particles = [];
 let isRunning = false;
 let shakeTime = 0;
 
-// 設定値
 const config = {
-    barWidth: 2,
-    gap: 1,
-    hueS: 280, // 紫
-    hueE: 30,  // オレンジ
-    // しきい値を少し下げて反応しやすくしました
-    bassThreshold: 180,   
-    trebleThreshold: 100  
+    barWidth: 2, gap: 1, hueS: 280, hueE: 30,
+    bassThreshold: 180, trebleThreshold: 100  
 };
 
-async function init() {
+// マイクモード開始
+async function startMic() {
+    initAudioContext();
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        sourceNode = audioCtx.createMediaStreamSource(stream);
+        setupVisualizer("MICROPHONE");
+    } catch (err) {
+        alert("マイクエラー: " + err);
+    }
+}
+
+// ファイルモード用：隠し入力をクリック
+function triggerFileSelect() {
+    fileInput.click();
+}
+
+// ファイルが選択された時
+fileInput.onchange = function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    initAudioContext();
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        audioCtx.decodeAudioData(event.target.result, function(buffer) {
+            if (sourceNode) sourceNode.disconnect();
+            sourceNode = audioCtx.createBufferSource();
+            sourceNode.buffer = buffer;
+            sourceNode.loop = true;
+            sourceNode.start(0);
+            setupVisualizer("FILE: " + file.name.substring(0, 10) + "...");
+        });
+    };
+    reader.readAsArrayBuffer(file);
+};
+
+function initAudioContext() {
+    if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const source = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 512;
-        source.connect(analyser);
-        dataArray = new Uint8Array(analyser.frequencyBinCount);
-        
-        document.getElementById('overlay').style.display = 'none';
-        isRunning = true;
-        resize();
-        animate();
-    } catch (err) {
-        alert("マイク接続エラー: " + err);
     }
+}
+
+function setupVisualizer(type) {
+    sourceNode.connect(analyser);
+    if (type.includes("FILE")) {
+        // ファイル再生の場合は音をスピーカーに出す必要がある
+        analyser.connect(audioCtx.destination);
+    }
+    dataArray = new Uint8Array(analyser.frequencyBinCount);
+    document.getElementById('overlay').style.display = 'none';
+    document.getElementById('srcType').innerText = type;
+    isRunning = true;
+    resize();
+    animate();
 }
 
 function resize() {
@@ -95,7 +150,6 @@ function animate() {
     requestAnimationFrame(animate);
     analyser.getByteFrequencyData(dataArray);
 
-    // --- 周波数判定のロジック改善 (範囲平均を取る) ---
     let bassSum = 0;
     for(let i=0; i<8; i++) bassSum += dataArray[i];
     const bassAvg = bassSum / 8;
@@ -104,20 +158,16 @@ function animate() {
     for(let i=150; i<200; i++) trebleSum += dataArray[i];
     const trebleAvg = trebleSum / 50;
 
-    // モニター更新
     document.getElementById('lowVal').innerText = Math.floor(bassAvg);
     document.getElementById('highVal').innerText = Math.floor(trebleAvg);
 
-    // --- エフェクト判定 ---
     let isBassTrigger = bassAvg > config.bassThreshold;
     let isTrebleTrigger = trebleAvg > config.trebleThreshold;
-
     document.getElementById('lowStatus').innerHTML = isBassTrigger ? '<span class="active-label">SHAKE!</span>' : '';
     document.getElementById('highStatus').innerHTML = isTrebleTrigger ? '<span class="active-label">SPARK!</span>' : '';
 
     if (isBassTrigger) shakeTime = 8;
 
-    // --- 描画処理 ---
     ctx.save();
     if (shakeTime > 0) {
         ctx.translate((Math.random()-0.5)*15, (Math.random()-0.5)*15);
@@ -130,14 +180,7 @@ function animate() {
 
     const barCount = Math.floor(canvas.width / (config.barWidth + config.gap));
     const baseY = canvas.height * 0.65;
-
     ctx.globalCompositeOperation = 'lighter';
-
-    // 低音ヒット時に背景に一瞬だけ光を
-    if(isBassTrigger) {
-        ctx.fillStyle = 'rgba(123, 0, 255, 0.05)';
-        ctx.fillRect(0,0, canvas.width, canvas.height);
-    }
 
     for (let i = 0; i < barCount; i++) {
         const relX = i / barCount;
@@ -145,17 +188,14 @@ function animate() {
         const dataIdx = Math.floor(relX * dataArray.length * 0.8);
         const val = dataArray[dataIdx];
         const h = (val / 255) * canvas.height * 0.65 * Math.sin(relX * Math.PI);
-
         const hue = config.hueS + (config.hueE - config.hueS) * relX;
 
-        // メインバー
         const grd = ctx.createLinearGradient(x, baseY - h, x, baseY);
         grd.addColorStop(0, `hsla(${hue}, 100%, 75%, 0.85)`);
         grd.addColorStop(1, `hsla(${hue}, 80%, 30%, 0)`);
         ctx.fillStyle = grd;
         ctx.fillRect(x, baseY - h, config.barWidth, h);
 
-        // 高音ヒット時にその位置から火花を飛ばす
         if (isTrebleTrigger && Math.random() > 0.98) {
             particles.push({
                 x: Math.random() * canvas.width, y: Math.random() * canvas.height,
@@ -163,8 +203,6 @@ function animate() {
                 life: 1.0, color: '#fff', size: 2
             });
         }
-
-        // 通常の浮遊粒子
         if (val > 210 && Math.random() > 0.9) {
             particles.push({
                 x: x, y: baseY - h, 
@@ -174,25 +212,19 @@ function animate() {
         }
     }
 
-    // 粒子描画
     for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         p.x += p.vx; p.y += p.vy; p.life -= 0.02;
-        if (p.life <= 0) {
-            particles.splice(i, 1);
-            continue;
-        }
+        if (p.life <= 0) { particles.splice(i, 1); continue; }
         ctx.fillStyle = p.color;
         ctx.globalAlpha = p.life;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
         ctx.fill();
     }
-
     ctx.restore();
 }
 
-startBtn.addEventListener('click', init);
 window.addEventListener('resize', resize);
 </script>
 </body>
