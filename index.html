@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Neon Analyzer v12.2</title>
+    <title>Neon RAW v12.3</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; touch-action: none; }
         canvas { display: block; }
@@ -17,8 +17,6 @@
             border: 2px solid #00f2fe; border-radius: 50px; cursor: pointer; font-weight: bold;
             box-shadow: 0 0 15px rgba(0, 242, 254, 0.4);
         }
-        #error-msg { color: #ff007b; font-size: 12px; margin-top: 20px; text-align: center; padding: 0 20px; }
-        
         #dashboard {
             position: absolute; bottom: -120px; left: 50%; transform: translateX(-50%);
             width: 90%; max-width: 400px; background: rgba(10, 10, 25, 0.9);
@@ -28,7 +26,7 @@
         .tab-handle {
             position: absolute; top: -30px; left: 50%; transform: translateX(-50%);
             background: rgba(10, 10, 25, 0.9); padding: 5px 20px; border-radius: 10px 10px 0 0;
-            font-size: 10px; color: #00f2fe;
+            font-size: 10px; color: #00f2fe; cursor: pointer;
         }
         .mode-row { display: flex; gap: 8px; margin-bottom: 10px; }
         .mode-btn { flex: 1; padding: 8px; font-size: 10px; background: #222; border: 1px solid #444; color: #888; border-radius: 5px; }
@@ -38,8 +36,7 @@
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">LAUNCH ENGINE v12.2</button>
-    <div id="error-msg"></div>
+    <button id="startBtn" class="start-btn">LAUNCH RAW ENGINE v12.3</button>
 </div>
 
 <div id="dashboard">
@@ -60,7 +57,6 @@
 const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d');
 const startBtn = document.getElementById('startBtn');
-const errorMsg = document.getElementById('error-msg');
 
 let audioCtx, analyser, dataArray, sourceNode;
 let isRunning = false, currentMode = 'ART', barMapping = [], maxVolume = 20;
@@ -74,15 +70,14 @@ function setMode(m) {
 
 startBtn.onclick = async () => {
     try {
-        errorMsg.innerText = "Initializing Microphone...";
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if (audioCtx.state === 'suspended') await audioCtx.resume();
 
         sourceNode = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048; // スマホの安定性を最優先
+        analyser.fftSize = 8192; // 低域解像度を確保
+        analyser.smoothingTimeConstant = 0.5; // レスポンス重視
         sourceNode.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
         
@@ -90,12 +85,10 @@ startBtn.onclick = async () => {
         isRunning = true;
         resize();
         animate();
-    } catch (err) {
-        errorMsg.innerHTML = "ERROR: " + err.name + "<br>ブラウザの設定でマイクを「許可」にしてください。";
-        console.error(err);
-    }
+    } catch (err) { alert("Error: " + err); }
 };
 
+// 聴感補正
 function getAWeighting(f) {
     if (f <= 20) return -50;
     const f2 = f * f;
@@ -107,11 +100,23 @@ function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     barMapping = [];
-    const barW = 3, count = Math.floor(canvas.width / barW), sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
-    for (let i = 0; i < count; i++) {
-        const relX = i / count, f = 20 * Math.pow(((sampleRate/2)*0.7)/20, relX);
-        const bIdx = Math.round((f * (analyser ? analyser.fftSize : 2048)) / sampleRate);
-        barMapping.push({ bIdx, weight: getAWeighting(f), x: i * barW, hue: 280 + (40 - 280) * relX });
+    const barW = 3;
+    const barCount = Math.floor(canvas.width / barW);
+    const sampleRate = audioCtx ? audioCtx.sampleRate : 44100;
+
+    for (let i = 0; i < barCount; i++) {
+        // --- 1対1 マッピング・ロジック ---
+        // 補間を使わず、インデックスを1つずつ進める (低音域重視)
+        const binIdx = i + 1; 
+        const f = binIdx * sampleRate / 8192;
+        const hue = 280 + (40 - 280) * (i / barCount);
+        
+        barMapping.push({ 
+            binIdx, 
+            weight: getAWeighting(f), 
+            x: i * barW, 
+            hue 
+        });
     }
 }
 
@@ -123,7 +128,7 @@ function animate() {
     let frameMax = 0;
     for(let i=0; i<dataArray.length; i++) if(dataArray[i] > frameMax) frameMax = dataArray[i];
     maxVolume = Math.max(frameMax, maxVolume * 0.99, 10);
-    const autoGain = 200 / maxVolume;
+    const autoGain = 250 / maxVolume;
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = 'rgba(0, 0, 8, 0.3)';
@@ -134,10 +139,23 @@ function animate() {
 
     for (let i = 0; i < barMapping.length; i++) {
         const m = barMapping[i];
-        let h = ((dataArray[m.bIdx] || 0) + m.weight) * (currentMode === 'VOICE' ? autoGain : 1.2);
-        h = (h / 255) * canvas.height * 0.6 * sens * Math.sin((i / barMapping.length) * Math.PI);
+        
+        // --- 補間なし: 該当するbinの値を直接取得 ---
+        const rawVal = dataArray[m.binIdx] || 0;
+        
+        let h;
+        if (currentMode === 'RAW') {
+            h = (rawVal / 255) * canvas.height * 0.6 * sens;
+        } else {
+            // ART/VOICE: 聴感補正とゲインを適用
+            let pVal = (rawVal + m.weight) * (currentMode === 'VOICE' ? autoGain : 1.3);
+            h = (Math.max(0, pVal) / 255) * canvas.height * 0.7 * sens;
+        }
+
+        // 表示の安全制限
         h = Math.max(2, Math.min(h, canvas.height * 0.9));
 
+        // 描画
         const grd = ctx.createLinearGradient(m.x, baseY - h, m.x, baseY);
         grd.addColorStop(0, `hsla(${m.hue}, 100%, 80%, 0.8)`);
         grd.addColorStop(1, `hsla(${m.hue}, 80%, 30%, 0)`);
@@ -145,8 +163,8 @@ function animate() {
         ctx.fillRect(m.x, baseY - h, 2, h);
 
         if (currentMode === 'ART' && h > 20) {
-            ctx.fillStyle = `hsla(${m.hue}, 100%, 90%, 0.4)`;
-            ctx.beginPath(); ctx.arc(m.x + 1, baseY - h, 2, 0, 7); ctx.fill();
+            ctx.fillStyle = `hsla(${m.hue}, 100%, 95%, 0.5)`;
+            ctx.beginPath(); ctx.arc(m.x + 1, baseY - h, 2.5, 0, 7); ctx.fill();
         }
     }
 }
