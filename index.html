@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Nebula Art v16.0</title>
+    <title>Supernova Art v16.1</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; touch-action: none; }
         canvas { display: block; }
@@ -20,23 +20,20 @@
             border-radius: 4px; font-weight: bold; letter-spacing: 5px; z-index: 100;
         }
         .mode-row { display: flex; gap: 5px; }
-        .m-btn {
-            flex: 1; padding: 8px; font-size: 9px; background: #111; border: 1px solid #333;
-            color: #666; border-radius: 4px;
-        }
+        .m-btn { flex: 1; padding: 8px; font-size: 9px; background: #111; border: 1px solid #333; color: #666; border-radius: 4px; }
         .m-btn.active { border-color: #00f2fe; color: #fff; background: rgba(0, 242, 254, 0.1); }
         input[type="range"] { width: 100%; accent-color: #00f2fe; }
     </style>
 </head>
 <body>
 
-<button id="startBtn" class="start-btn">START ART</button>
+<button id="startBtn" class="start-btn">IGNITE ART</button>
 
 <div id="ui-layer">
     <div class="mode-row">
-        <button id="e-pop" class="m-btn active" onclick="setEngine('POP')">NEON POP</button>
+        <button id="e-pop" class="m-btn active" onclick="setEngine('POP')">VIVID POP</button>
         <button id="e-voice" class="m-btn" onclick="setEngine('VOICE')">VOCAL</button>
-        <button id="e-raw" class="m-btn" onclick="setEngine('RAW')">RAW ART</button>
+        <button id="e-raw" class="m-btn" onclick="setEngine('RAW')">RAW</button>
     </div>
     <input type="range" id="sensSlider" min="1" max="25" step="0.1" value="12">
 </div>
@@ -48,6 +45,20 @@ const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 let audioCtx, analyser, dataArray, isRunning = false;
 let bands = [], currentEngine = 'POP';
+
+// エネルギー管理
+let centerEnergy = 0;
+const CRITICAL_POINT = 120; // 爆発の臨界点
+
+// パーティクル・プール
+const MAX_P = 800;
+const pPool = Array.from({ length: MAX_P }, () => ({ x:0, y:0, vx:0, vy:0, life:0, hue:0, active:false, type: 'out' }));
+
+function spawn(x, y, hue, vx, vy, type = 'out') {
+    const p = pPool.find(p => !p.active) || pPool[0];
+    p.active = true; p.x = x; p.y = y; p.vx = vx; p.vy = vy;
+    p.life = 1.0; p.hue = hue; p.type = type;
+}
 
 function setEngine(e) {
     currentEngine = e;
@@ -62,7 +73,7 @@ document.getElementById('startBtn').onclick = async () => {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         const source = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048; 
+        analyser.fftSize = 2048;
         source.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
         document.getElementById('startBtn').style.display = 'none';
@@ -81,9 +92,7 @@ function setupBands() {
     let freq = 25;
     while (freq < 16000) {
         let nextFreq = freq * 1.25;
-        let start = Math.floor(freq * 2048 / sampleRate);
-        let end = Math.floor(nextFreq * 2048 / sampleRate);
-        bands.push({ freq, start, end });
+        bands.push({ start: Math.floor(freq * 2048 / sampleRate), end: Math.floor(nextFreq * 2048 / sampleRate), freq });
         freq = nextFreq;
     }
 }
@@ -95,62 +104,75 @@ function animate() {
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = '#000008';
-    ctx.globalAlpha = 0.15; // 幻想的な残像
+    ctx.globalAlpha = 0.18;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 1.0;
 
-    const sens = parseFloat(document.getElementById('sensSlider').value);
     const centerX = canvas.width / 2;
     const centerY = canvas.height * 0.45;
-    const noiseFloor = 18;
-
+    const sens = parseFloat(document.getElementById('sensSlider').value);
+    
+    let frameEnergy = 0;
     ctx.globalCompositeOperation = 'lighter';
-
-    // 万華鏡の分割数
-    const sectors = 6;
-    const angleStep = (Math.PI * 2) / sectors;
 
     bands.forEach((b, i) => {
         let peak = 0;
         for (let j = b.start; j <= b.end; j++) if (dataArray[j] > peak) peak = dataArray[j];
-        
-        let val = Math.max(0, peak - noiseFloor);
-        let boost = 1.0;
-        if (currentEngine === 'POP') {
-            boost = (b.freq > 2000) ? 1.8 : 1.2;
-        } else if (currentEngine === 'VOICE') {
-            boost = (b.freq > 300 && b.freq < 5000) ? 2.5 : 0.1;
-        }
+        let val = Math.max(0, peak - 18);
+        frameEnergy += val;
 
-        const r = Math.pow((val / 255) * boost * sens, 0.8) * canvas.width * 0.4;
-        const hue = 250 + (i * 5) + (val * 0.2); // 音圧で色を微変させる
+        const r = Math.pow((val / 255) * sens, 0.8) * canvas.width * 0.35;
+        const hue = 250 + (i * 4);
 
-        if (r > 5) {
-            for (let s = 0; s < sectors; s++) {
-                const angle = s * angleStep + (Date.now() * 0.0005); // ゆっくり回転
-                const x = centerX + Math.cos(angle) * (i * 8);
-                const y = centerY + Math.sin(angle) * (i * 8);
-
-                ctx.fillStyle = `hsla(${hue}, 100%, 70%, 0.3)`;
+        if (r > 10) {
+            // 万華鏡描画
+            for (let s = 0; s < 6; s++) {
+                const angle = s * (Math.PI/3) + (Date.now() * 0.0004);
+                ctx.fillStyle = `hsla(${hue}, 100%, 70%, 0.2)`;
                 ctx.beginPath();
-                // 放射状に広がる光の粒子
-                ctx.arc(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r, r * 0.05, 0, 7);
+                ctx.arc(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r, r * 0.04, 0, 7);
                 ctx.fill();
-
-                // 中心からの光の筋
-                if (i % 2 === 0) {
-                    ctx.strokeStyle = `hsla(${hue}, 100%, 50%, 0.1)`;
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-                    ctx.moveTo(centerX, centerY);
-                    ctx.lineTo(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r);
-                    ctx.stroke();
-                }
+            }
+            // エネルギー集束時のインワード・パーティクル
+            if (centerEnergy > 60 && Math.random() > 0.85) {
+                const ang = Math.random() * Math.PI * 2;
+                const dist = canvas.width * 0.6;
+                spawn(centerX + Math.cos(ang) * dist, centerY + Math.sin(ang) * dist, hue, -Math.cos(ang)*8, -Math.sin(ang)*8, 'in');
             }
         }
     });
-}
-window.addEventListener('resize', resize);
-</script>
-</body>
-</html>
+
+    // エネルギー蓄積と爆発判定
+    const avgEnergy = frameEnergy / bands.length;
+    centerEnergy = (avgEnergy > 30) ? centerEnergy + (avgEnergy * 0.05) : centerEnergy * 0.98;
+
+    // 超新星爆発
+    if (centerEnergy > CRITICAL_POINT) {
+        for (let i = 0; i < 200; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const spd = Math.random() * 20 + 5;
+            spawn(centerX, centerY, Math.random()*360, Math.cos(ang)*spd, Math.sin(ang)*spd, 'out');
+        }
+        centerEnergy = 0; // リセット
+        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height); // フラッシュ
+    }
+
+    // 中心部のコア描画
+    const coreSize = centerEnergy * 0.8;
+    if (coreSize > 5) {
+        const grad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreSize);
+        grad.addColorStop(0, '#fff');
+        grad.addColorStop(0.5, `hsla(200, 100%, 70%, 0.5)`);
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(centerX, centerY, coreSize, 0, 7); ctx.fill();
+    }
+
+    // パーティクル更新
+    pPool.forEach(p => {
+        if (!p.active) return;
+        p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+        if (p.life <= 0) p.active = false;
+        if (p.type === 'in' && Math.abs(p.x - centerX) < 10) p.active = false; // 中心に到達
+
+        ctx.fillStyle = `hsla(${p.hue}, 100%, 80%, ${p
