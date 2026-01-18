@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Supernova Art v16.2</title>
+    <title>Supernova Debug v16.3</title>
     <style>
-        body { margin: 0; background: #000; color: white; overflow: hidden; touch-action: none; font-family: sans-serif; }
+        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; }
         canvas { display: block; }
         
         #overlay {
@@ -14,11 +14,18 @@
             background: #000; z-index: 100;
         }
         .start-btn {
-            padding: 20px 45px; color: #fff; background: linear-gradient(45deg, #00f2fe, #7c3aed);
+            padding: 20px 50px; color: #fff; background: linear-gradient(45deg, #00f2fe, #7c3aed);
             border: none; border-radius: 50px; font-weight: bold; font-size: 16px;
-            letter-spacing: 2px; cursor: pointer; box-shadow: 0 0 30px rgba(0, 242, 254, 0.4);
+            letter-spacing: 2px; cursor: pointer;
         }
-        #status-msg { margin-top: 15px; font-size: 10px; color: #666; }
+
+        #debug-panel {
+            position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8);
+            padding: 10px; border-radius: 5px; border: 1px solid #333; z-index: 60;
+            font-family: monospace; font-size: 10px; pointer-events: none;
+        }
+        #mic-bar { width: 100px; height: 10px; background: #222; margin-top: 5px; }
+        #mic-fill { width: 0%; height: 100%; background: #00f2fe; }
 
         #ui-layer {
             position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -26,26 +33,25 @@
             padding: 12px; border-radius: 15px; backdrop-filter: blur(15px);
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
-        .mode-row { display: flex; gap: 5px; margin-bottom: 8px; }
-        .m-btn { flex: 1; padding: 10px; font-size: 9px; background: #111; border: 1px solid #333; color: #666; border-radius: 6px; }
-        .m-btn.active { border-color: #00f2fe; color: #fff; background: rgba(0, 242, 254, 0.1); }
+        .m-btn { flex: 1; padding: 10px; font-size: 9px; background: #111; border: 1px solid #333; color: #fff; border-radius: 6px; }
         input[type="range"] { width: 100%; accent-color: #00f2fe; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">IGNITE ART SPACE</button>
-    <div id="status-msg">READY (WAITING FOR INPUT)</div>
+    <button id="startBtn" class="start-btn">START ART</button>
+    <p id="err-log" style="font-size: 10px; color: #666; margin-top: 10px;">Waiting for your tap...</p>
+</div>
+
+<div id="debug-panel">
+    STATUS: <span id="ctx-status">INIT</span><br>
+    MIC LEVEL:
+    <div id="mic-bar"><div id="mic-fill"></div></div>
 </div>
 
 <div id="ui-layer" style="display:none;">
-    <div class="mode-row">
-        <button id="e-pop" class="m-btn active" onclick="setEngine('POP')">VIVID POP</button>
-        <button id="e-voice" class="m-btn" onclick="setEngine('VOICE')">VOCAL</button>
-        <button id="e-raw" class="m-btn" onclick="setEngine('RAW')">RAW DATA</button>
-    </div>
-    <input type="range" id="sensSlider" min="1" max="25" step="0.1" value="12">
+    <input type="range" id="sensSlider" min="1" max="30" step="0.1" value="15">
 </div>
 
 <canvas id="waveCanvas"></canvas>
@@ -53,62 +59,43 @@
 <script>
 const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
-const statusMsg = document.getElementById('status-msg');
+const micFill = document.getElementById('mic-fill');
+const ctxStatus = document.getElementById('ctx-status');
+const errLog = document.getElementById('err-log');
+
 let audioCtx, analyser, dataArray, isRunning = false;
-let bands = [], currentEngine = 'POP', centerEnergy = 0;
-const CRITICAL_POINT = 120;
-const MAX_P = 800;
-const pPool = Array.from({ length: MAX_P }, () => ({ x:0, y:0, vx:0, vy:0, life:0, hue:0, active:false, type: 'out' }));
+let bands = [], centerEnergy = 0, pPool = [];
 
-function setEngine(e) {
-    currentEngine = e;
-    ['POP', 'VOICE', 'RAW'].forEach(m => document.getElementById('e-' + m.toLowerCase()).classList.toggle('active', e === m));
-    if (analyser) analyser.smoothingTimeConstant = (e === 'RAW') ? 0.2 : 0.6;
-}
-
-function spawn(x, y, hue, vx, vy, type = 'out') {
-    const p = pPool.find(p => !p.active) || pPool[0];
-    p.active = true; p.x = x; p.y = y; p.vx = vx; p.vy = vy;
-    p.life = 1.0; p.hue = hue; p.type = type;
-}
+// パーティクル初期化
+for(let i=0; i<800; i++) pPool.push({x:0, y:0, vx:0, vy:0, life:0, hue:0, active:false});
 
 document.getElementById('startBtn').onclick = async () => {
-    statusMsg.innerText = "INITIALIZING AUDIO...";
-    
     try {
-        // 1. AudioContextの作成と再開 (ジェスチャー内で行う)
-        if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        await audioCtx.resume();
-
-        // 2. マイクの取得
-        const constraints = {
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-        };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        // AudioContextの生成
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         
+        // 1. マイク取得
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // 2. 音声ノード接続
         const source = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 2048;
         source.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-        // UI表示の切り替え
+        // 3. コンテキスト開始
+        await audioCtx.resume();
+        
         document.getElementById('overlay').style.display = 'none';
-        document.getElementById('ui-layer').style.display = 'flex';
+        document.getElementById('ui-layer').style.display = 'block';
         isRunning = true;
         resize();
         animate();
         
     } catch (err) {
+        errLog.innerText = "ERROR: " + err.message;
         console.error(err);
-        statusMsg.style.color = "#ff4444";
-        if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-            statusMsg.innerText = "ERROR: HTTPS CONNECTION REQUIRED FOR MIC";
-        } else {
-            statusMsg.innerText = "ERROR: MIC ACCESS DENIED (" + err.name + ")";
-        }
     }
 };
 
@@ -134,9 +121,16 @@ function animate() {
     requestAnimationFrame(animate);
     analyser.getByteFrequencyData(dataArray);
 
+    // デバッグ情報更新
+    ctxStatus.innerText = audioCtx.state.toUpperCase();
+    let sum = 0;
+    for(let v of dataArray) sum += v;
+    let avg = sum / dataArray.length;
+    micFill.style.width = (avg * 2) + "%"; // 簡易レベルメーター
+
+    // --- 描画ロジック (v16.2準拠) ---
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = '#000008';
-    ctx.globalAlpha = 0.2;
+    ctx.fillStyle = '#000008'; ctx.globalAlpha = 0.2;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 1.0;
 
@@ -144,14 +138,14 @@ function animate() {
     const centerY = canvas.height * 0.45;
     const sens = parseFloat(document.getElementById('sensSlider').value);
     
-    let frameEnergy = 0;
     ctx.globalCompositeOperation = 'lighter';
+    let frameTotal = 0;
 
     bands.forEach((b, i) => {
         let peak = 0;
         for (let j = b.start; j <= b.end; j++) if (dataArray[j] > peak) peak = dataArray[j];
-        let val = Math.max(0, peak - 18);
-        frameEnergy += val;
+        let val = Math.max(0, peak - 15);
+        frameTotal += val;
 
         const r = Math.pow((val / 255) * sens, 0.8) * canvas.width * 0.35;
         const hue = 250 + (i * 4);
@@ -164,41 +158,23 @@ function animate() {
                 ctx.arc(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r, Math.max(2, r * 0.03), 0, 7);
                 ctx.fill();
             }
-            if (centerEnergy > 60 && Math.random() > 0.85) {
-                const ang = Math.random() * Math.PI * 2;
-                spawn(centerX + Math.cos(ang) * 400, centerY + Math.sin(ang) * 400, hue, -Math.cos(ang)*10, -Math.sin(ang)*10, 'in');
-            }
         }
     });
 
-    const avgEnergy = frameEnergy / bands.length;
-    centerEnergy = (avgEnergy > 30) ? centerEnergy + (avgEnergy * 0.05) : centerEnergy * 0.98;
-
-    if (centerEnergy > CRITICAL_POINT) {
-        for (let i = 0; i < 200; i++) {
-            const ang = Math.random() * Math.PI * 2;
-            const spd = Math.random() * 25 + 5;
-            spawn(centerX, centerY, Math.random()*360, Math.cos(ang)*spd, Math.sin(ang)*spd, 'out');
-        }
+    // 爆発ロジック
+    const avgEnergy = frameTotal / bands.length;
+    centerEnergy = (avgEnergy > 25) ? centerEnergy + (avgEnergy * 0.05) : centerEnergy * 0.98;
+    
+    if (centerEnergy > 100) {
         centerEnergy = 0;
         ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
     }
-
+    
     const coreSize = centerEnergy * 0.8;
     if (coreSize > 5) {
-        ctx.fillStyle = `hsla(200, 100%, 80%, ${Math.min(0.8, centerEnergy/100)})`;
+        ctx.fillStyle = `hsla(200, 100%, 80%, 0.5)`;
         ctx.beginPath(); ctx.arc(centerX, centerY, coreSize, 0, 7); ctx.fill();
     }
-
-    pPool.forEach(p => {
-        if (!p.active) return;
-        p.x += p.vx; p.y += p.vy; p.life -= 0.02;
-        if (p.life <= 0 || (p.type === 'in' && Math.abs(p.x - centerX) < 15)) {
-            p.active = false; return;
-        }
-        ctx.fillStyle = `hsla(${p.hue}, 100%, 80%, ${p.life})`;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.type==='out'?2.5:1.2, 0, 7); ctx.fill();
-    });
 }
 window.addEventListener('resize', resize);
 </script>
