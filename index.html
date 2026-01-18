@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Deep Space v16.9</title>
+    <title>Chorus Intelligence v17.0</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; }
         canvas { display: block; }
@@ -22,18 +22,16 @@
             width: 85%; max-width: 400px; z-index: 50; background: rgba(0,0,0,0.8); 
             padding: 15px; border-radius: 12px; backdrop-filter: blur(10px);
         }
-        .label { font-size: 10px; color: #00f2fe; margin-bottom: 5px; font-weight: bold; letter-spacing: 2px; }
     </style>
 </head>
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">BOOT DEEP SPACE</button>
+    <button id="startBtn" class="start-btn">INITIALIZE v17.0</button>
 </div>
 
 <div id="ui-layer" style="display:none;">
-    <div class="label">MASTER SENSITIVITY</div>
-    <input type="range" id="sensSlider" min="1" max="60" step="0.1" value="30">
+    <input type="range" id="sensSlider" min="1" max="60" step="0.1" value="25">
 </div>
 
 <canvas id="waveCanvas"></canvas>
@@ -42,17 +40,16 @@
 const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 let audioCtx, analyser, dataArray, isRunning = false;
-let bands = [], charge = 0, flash = 0, shockwave = 0, rayLife = 0;
+let bands = [], charge = 0, flash = 0, shockwave = 0, rayLife = 0, lastCoreSize = 0;
 
 const MAX_P = 800;
 const pPool = Array.from({ length: MAX_P }, () => ({ x:0, y:0, vx:0, vy:0, life:0, hue:0, active:false }));
 
-// --- パラメータ調整 (v16.9) ---
-const NOISE_FLOOR = 12;         // テレビの音を拾うため少し下げる
-const INSTANT_LIMIT = 254;      // 瞬間爆発：ほぼ最高値のみ
-const CHARGE_THRESHOLD = 55;    // 蓄積開始：テレビ音楽のサビで溜まる設定
-const CRITICAL_POINT = 140;     // 臨界点：以前の100から引き上げ(より溜めが必要)
-const BASE_CHARGE_RATE = 0.45;  // 溜まる速度
+// --- パラメータ調整 (v17.0) ---
+const NOISE_FLOOR = 15;
+const CHARGE_THRESHOLD = 50;    // 蓄積開始ライン
+const CRITICAL_POINT = 120;     // 爆発臨界点
+const DECAY_SPEED = 0.92;       // 呼吸するように抜ける速度（以前より速く）
 
 function spawn(x, y, hue, vx, vy) {
     const p = pPool.find(p => !p.active) || pPool[0];
@@ -63,9 +60,7 @@ function spawn(x, y, hue, vx, vy) {
 document.getElementById('startBtn').onclick = async () => {
     try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const source = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 2048;
@@ -96,9 +91,10 @@ function setupBands() {
 
 function explode(centerX, centerY) {
     flash = 1.0; shockwave = 10; rayLife = 1.0;
+    lastCoreSize = charge * 0.7; // 爆発直前のサイズを記録
     for (let i = 0; i < 600; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const spd = Math.random() * 32 + 4;
+        const spd = Math.random() * 35 + 5;
         spawn(centerX, centerY, Math.random() * 30 + 190, Math.cos(ang) * spd, Math.sin(ang) * spd);
     }
 }
@@ -109,7 +105,7 @@ function animate() {
     analyser.getByteFrequencyData(dataArray);
 
     ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = '#000004'; ctx.globalAlpha = 0.25; 
+    ctx.fillStyle = '#000004'; ctx.globalAlpha = 0.3; 
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 1.0;
 
@@ -117,84 +113,103 @@ function animate() {
     const centerY = canvas.height * 0.45;
     const sens = parseFloat(document.getElementById('sensSlider').value);
     
-    let totalAmp = 0, activeCount = 0, maxP = 0;
+    let totalAmp = 0, activeCount = 0;
     ctx.globalCompositeOperation = 'lighter';
 
     bands.forEach((b, i) => {
         let p = 0;
         for (let j = b.start; j <= b.end; j++) if (dataArray[j] > p) p = dataArray[j];
-        if (p > maxP) maxP = p;
         let val = Math.max(0, p - NOISE_FLOOR);
         totalAmp += val;
-        if (val > 15) activeCount++;
+        if (val > 25) activeCount++;
 
-        // 小さな音への感度をさらに強調
-        const r = Math.pow((val / 255) * sens, 0.65) * canvas.width * 0.38;
+        const r = Math.pow((val / 255) * sens, 0.65) * canvas.width * 0.4;
         if (r > 3) {
-            const hue = 260 + (i * 2.5);
+            const hue = 260 + (i * 2);
             for (let s = 0; s < 6; s++) {
-                const angle = s * (Math.PI/3) + (Date.now() * 0.00035);
-                ctx.fillStyle = `hsla(${hue}, 100%, 75%, 0.12)`;
-                ctx.beginPath(); 
-                ctx.arc(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r, 1.8, 0, 7); 
-                ctx.fill();
+                const angle = s * (Math.PI/3) + (Date.now() * 0.0003);
+                ctx.fillStyle = `hsla(${hue}, 100%, 70%, 0.1)`;
+                ctx.beginPath(); ctx.arc(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r, 2, 0, 7); ctx.fill();
             }
         }
     });
 
-    // 帯域拡散による「声」ロック
+    // --- サビ判定 & 呼吸するエネルギーロジック ---
     const spread = activeCount / bands.length;
-    const voiceLock = (spread < 0.38) ? 0.15 : 1.0;
-    
     const avg = totalAmp / bands.length;
-    if (maxP >= INSTANT_LIMIT) {
-        explode(centerX, centerY);
-        charge = 0;
-    } else if (avg > CHARGE_THRESHOLD) {
-        charge += BASE_CHARGE_RATE * voiceLock;
+    
+    // サビ(広帯域かつ一定以上の音圧)の条件
+    if (spread > 0.45 && avg > CHARGE_THRESHOLD) {
+        charge += (avg / CHARGE_THRESHOLD) * 0.8;
     } else {
-        charge *= 0.97;
+        charge *= DECAY_SPEED; // 素早くエネルギーを抜く
     }
 
     if (charge > CRITICAL_POINT) { explode(centerX, centerY); charge = 0; }
 
-    // ビーム演出 (真空の幻想光)
+    // --- 進化版: シンギュラリティ・レイ (一軸の幻想光) ---
     if (rayLife > 0) {
-        const beamGrd = ctx.createLinearGradient(0, centerY, canvas.width, centerY);
-        beamGrd.addColorStop(0, 'transparent');
-        beamGrd.addColorStop(0.5, `rgba(255, 255, 255, ${rayLife})`);
+        const maxWidth = Math.min(lastCoreSize * 1.2, canvas.height * 0.2);
+        
+        // ビームの形状描画 (中心が太く端が細い等比級数的な広がり)
+        ctx.beginPath();
+        const steps = 40;
+        // 右側
+        for(let i=0; i<=steps; i++){
+            let x = centerX + (canvas.width/2) * (i/steps);
+            let w = maxWidth * Math.pow(0.85, i) * rayLife;
+            if(i===0) ctx.moveTo(x, centerY - w); else ctx.lineTo(x, centerY - w);
+        }
+        for(let i=steps; i>=0; i--){
+            let x = centerX + (canvas.width/2) * (i/steps);
+            let w = maxWidth * Math.pow(0.85, i) * rayLife;
+            ctx.lineTo(x, centerY + w);
+        }
+        // 左側
+        for(let i=0; i<=steps; i++){
+            let x = centerX - (canvas.width/2) * (i/steps);
+            let w = maxWidth * Math.pow(0.85, i) * rayLife;
+            ctx.lineTo(x, centerY + w);
+        }
+        for(let i=steps; i>=0; i--){
+            let x = centerX - (canvas.width/2) * (i/steps);
+            let w = maxWidth * Math.pow(0.85, i) * rayLife;
+            ctx.lineTo(x, centerY - w);
+        }
+        ctx.closePath();
+
+        const beamGrd = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, canvas.width/2);
+        beamGrd.addColorStop(0, `rgba(255, 255, 255, ${rayLife})`);
+        beamGrd.addColorStop(0.2, `rgba(200, 240, 255, ${rayLife * 0.5})`);
         beamGrd.addColorStop(1, 'transparent');
+        ctx.fillStyle = beamGrd;
+        ctx.fill();
 
-        const glowGrd = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, canvas.width * 0.6);
-        glowGrd.addColorStop(0, `rgba(255, 255, 255, ${rayLife * 0.3})`);
-        glowGrd.addColorStop(0.2, `rgba(200, 240, 255, ${rayLife * 0.1})`);
-        glowGrd.addColorStop(1, 'transparent');
-
-        ctx.fillStyle = glowGrd; ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = beamGrd; ctx.fillRect(0, centerY - 1.5 * rayLife, canvas.width, 3 * rayLife);
-        rayLife -= 0.006;
+        rayLife -= 0.007;
     }
 
-    // フラッシュ & ショックウェーブ
-    if (flash > 0) {
-        ctx.fillStyle = `rgba(255, 255, 255, ${flash})`;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        flash *= 0.85;
-    }
-    if (shockwave > 0) {
-        ctx.strokeStyle = `rgba(255, 255, 255, ${1 - shockwave/canvas.width})`;
-        ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(centerX, centerY, shockwave, 0, 7); ctx.stroke();
-        shockwave += 30; if (shockwave > canvas.width * 1.5) shockwave = 0;
-    }
-
-    // コア描画
-    if (charge > 1) {
-        const s = charge * 0.5;
-        ctx.fillStyle = `rgba(255, 255, 255, ${charge/150})`;
+    // コア (蓄積量に合わせてサイズが変化)
+    if (charge > 2) {
+        const s = charge * 0.6;
+        const cGrd = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, s);
+        cGrd.addColorStop(0, '#fff');
+        cGrd.addColorStop(1, `rgba(255, 255, 255, ${charge/200})`);
+        ctx.fillStyle = cGrd;
         ctx.beginPath(); ctx.arc(centerX, centerY, s, 0, 7); ctx.fill();
     }
 
-    // 粒子描画
+    // 衝撃波 & フラッシュ
+    if (shockwave > 0) {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${1 - shockwave/canvas.width})`;
+        ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(centerX, centerY, shockwave, 0, 7); ctx.stroke();
+        shockwave += 35; if (shockwave > canvas.width * 1.5) shockwave = 0;
+    }
+    if (flash > 0) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${flash})`; ctx.fillRect(0,0,canvas.width,canvas.height);
+        flash *= 0.82;
+    }
+
+    // 粒子
     pPool.forEach(p => {
         if (!p.active) return;
         p.x += p.vx; p.y += p.vy; p.life -= 0.015;
