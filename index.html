@@ -3,37 +3,47 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Supernova Art v16.1</title>
+    <title>Supernova Art v16.2</title>
     <style>
-        body { margin: 0; background: #000; color: white; overflow: hidden; touch-action: none; }
+        body { margin: 0; background: #000; color: white; overflow: hidden; touch-action: none; font-family: sans-serif; }
         canvas { display: block; }
+        
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: #000; z-index: 100;
+        }
+        .start-btn {
+            padding: 20px 45px; color: #fff; background: linear-gradient(45deg, #00f2fe, #7c3aed);
+            border: none; border-radius: 50px; font-weight: bold; font-size: 16px;
+            letter-spacing: 2px; cursor: pointer; box-shadow: 0 0 30px rgba(0, 242, 254, 0.4);
+        }
+        #status-msg { margin-top: 15px; font-size: 10px; color: #666; }
+
         #ui-layer {
             position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
             width: 85%; max-width: 380px; z-index: 50; background: rgba(0,0,0,0.7); 
             padding: 12px; border-radius: 15px; backdrop-filter: blur(15px);
-            border: 1px solid rgba(0, 242, 254, 0.2);
-            display: flex; flex-direction: column; gap: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
-        .start-btn {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 20px 40px; color: #00f2fe; background: none; border: 1px solid #00f2fe;
-            border-radius: 4px; font-weight: bold; letter-spacing: 5px; z-index: 100;
-        }
-        .mode-row { display: flex; gap: 5px; }
-        .m-btn { flex: 1; padding: 8px; font-size: 9px; background: #111; border: 1px solid #333; color: #666; border-radius: 4px; }
+        .mode-row { display: flex; gap: 5px; margin-bottom: 8px; }
+        .m-btn { flex: 1; padding: 10px; font-size: 9px; background: #111; border: 1px solid #333; color: #666; border-radius: 6px; }
         .m-btn.active { border-color: #00f2fe; color: #fff; background: rgba(0, 242, 254, 0.1); }
         input[type="range"] { width: 100%; accent-color: #00f2fe; }
     </style>
 </head>
 <body>
 
-<button id="startBtn" class="start-btn">IGNITE ART</button>
+<div id="overlay">
+    <button id="startBtn" class="start-btn">IGNITE ART SPACE</button>
+    <div id="status-msg">READY (WAITING FOR INPUT)</div>
+</div>
 
-<div id="ui-layer">
+<div id="ui-layer" style="display:none;">
     <div class="mode-row">
         <button id="e-pop" class="m-btn active" onclick="setEngine('POP')">VIVID POP</button>
         <button id="e-voice" class="m-btn" onclick="setEngine('VOICE')">VOCAL</button>
-        <button id="e-raw" class="m-btn" onclick="setEngine('RAW')">RAW</button>
+        <button id="e-raw" class="m-btn" onclick="setEngine('RAW')">RAW DATA</button>
     </div>
     <input type="range" id="sensSlider" min="1" max="25" step="0.1" value="12">
 </div>
@@ -43,16 +53,18 @@
 <script>
 const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
+const statusMsg = document.getElementById('status-msg');
 let audioCtx, analyser, dataArray, isRunning = false;
-let bands = [], currentEngine = 'POP';
-
-// エネルギー管理
-let centerEnergy = 0;
-const CRITICAL_POINT = 120; // 爆発の臨界点
-
-// パーティクル・プール
+let bands = [], currentEngine = 'POP', centerEnergy = 0;
+const CRITICAL_POINT = 120;
 const MAX_P = 800;
 const pPool = Array.from({ length: MAX_P }, () => ({ x:0, y:0, vx:0, vy:0, life:0, hue:0, active:false, type: 'out' }));
+
+function setEngine(e) {
+    currentEngine = e;
+    ['POP', 'VOICE', 'RAW'].forEach(m => document.getElementById('e-' + m.toLowerCase()).classList.toggle('active', e === m));
+    if (analyser) analyser.smoothingTimeConstant = (e === 'RAW') ? 0.2 : 0.6;
+}
 
 function spawn(x, y, hue, vx, vy, type = 'out') {
     const p = pPool.find(p => !p.active) || pPool[0];
@@ -60,29 +72,49 @@ function spawn(x, y, hue, vx, vy, type = 'out') {
     p.life = 1.0; p.hue = hue; p.type = type;
 }
 
-function setEngine(e) {
-    currentEngine = e;
-    ['POP', 'VOICE', 'RAW'].forEach(m => document.getElementById('e-' + m.toLowerCase()).classList.toggle('active', e === m));
-}
-
 document.getElementById('startBtn').onclick = async () => {
+    statusMsg.innerText = "INITIALIZING AUDIO...";
+    
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        // 1. AudioContextの作成と再開 (ジェスチャー内で行う)
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        await audioCtx.resume();
+
+        // 2. マイクの取得
+        const constraints = {
             audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-        });
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
         const source = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 2048;
         source.connect(analyser);
         dataArray = new Uint8Array(analyser.frequencyBinCount);
-        document.getElementById('startBtn').style.display = 'none';
-        isRunning = true; resize(); animate();
-    } catch (err) { alert(err); }
+
+        // UI表示の切り替え
+        document.getElementById('overlay').style.display = 'none';
+        document.getElementById('ui-layer').style.display = 'flex';
+        isRunning = true;
+        resize();
+        animate();
+        
+    } catch (err) {
+        console.error(err);
+        statusMsg.style.color = "#ff4444";
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+            statusMsg.innerText = "ERROR: HTTPS CONNECTION REQUIRED FOR MIC";
+        } else {
+            statusMsg.innerText = "ERROR: MIC ACCESS DENIED (" + err.name + ")";
+        }
+    }
 };
 
 function resize() {
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     setupBands();
 }
 
@@ -104,7 +136,7 @@ function animate() {
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = '#000008';
-    ctx.globalAlpha = 0.18;
+    ctx.globalAlpha = 0.2;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 1.0;
 
@@ -125,54 +157,50 @@ function animate() {
         const hue = 250 + (i * 4);
 
         if (r > 10) {
-            // 万華鏡描画
             for (let s = 0; s < 6; s++) {
                 const angle = s * (Math.PI/3) + (Date.now() * 0.0004);
                 ctx.fillStyle = `hsla(${hue}, 100%, 70%, 0.2)`;
                 ctx.beginPath();
-                ctx.arc(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r, r * 0.04, 0, 7);
+                ctx.arc(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r, Math.max(2, r * 0.03), 0, 7);
                 ctx.fill();
             }
-            // エネルギー集束時のインワード・パーティクル
             if (centerEnergy > 60 && Math.random() > 0.85) {
                 const ang = Math.random() * Math.PI * 2;
-                const dist = canvas.width * 0.6;
-                spawn(centerX + Math.cos(ang) * dist, centerY + Math.sin(ang) * dist, hue, -Math.cos(ang)*8, -Math.sin(ang)*8, 'in');
+                spawn(centerX + Math.cos(ang) * 400, centerY + Math.sin(ang) * 400, hue, -Math.cos(ang)*10, -Math.sin(ang)*10, 'in');
             }
         }
     });
 
-    // エネルギー蓄積と爆発判定
     const avgEnergy = frameEnergy / bands.length;
     centerEnergy = (avgEnergy > 30) ? centerEnergy + (avgEnergy * 0.05) : centerEnergy * 0.98;
 
-    // 超新星爆発
     if (centerEnergy > CRITICAL_POINT) {
         for (let i = 0; i < 200; i++) {
             const ang = Math.random() * Math.PI * 2;
-            const spd = Math.random() * 20 + 5;
+            const spd = Math.random() * 25 + 5;
             spawn(centerX, centerY, Math.random()*360, Math.cos(ang)*spd, Math.sin(ang)*spd, 'out');
         }
-        centerEnergy = 0; // リセット
-        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height); // フラッシュ
+        centerEnergy = 0;
+        ctx.fillStyle = '#fff'; ctx.fillRect(0,0,canvas.width,canvas.height);
     }
 
-    // 中心部のコア描画
     const coreSize = centerEnergy * 0.8;
     if (coreSize > 5) {
-        const grad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreSize);
-        grad.addColorStop(0, '#fff');
-        grad.addColorStop(0.5, `hsla(200, 100%, 70%, 0.5)`);
-        grad.addColorStop(1, 'transparent');
-        ctx.fillStyle = grad;
+        ctx.fillStyle = `hsla(200, 100%, 80%, ${Math.min(0.8, centerEnergy/100)})`;
         ctx.beginPath(); ctx.arc(centerX, centerY, coreSize, 0, 7); ctx.fill();
     }
 
-    // パーティクル更新
     pPool.forEach(p => {
         if (!p.active) return;
         p.x += p.vx; p.y += p.vy; p.life -= 0.02;
-        if (p.life <= 0) p.active = false;
-        if (p.type === 'in' && Math.abs(p.x - centerX) < 10) p.active = false; // 中心に到達
-
-        ctx.fillStyle = `hsla(${p.hue}, 100%, 80%, ${p
+        if (p.life <= 0 || (p.type === 'in' && Math.abs(p.x - centerX) < 15)) {
+            p.active = false; return;
+        }
+        ctx.fillStyle = `hsla(${p.hue}, 100%, 80%, ${p.life})`;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.type==='out'?2.5:1.2, 0, 7); ctx.fill();
+    });
+}
+window.addEventListener('resize', resize);
+</script>
+</body>
+</html>
