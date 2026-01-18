@@ -3,24 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Singularity v18.1</title>
+    <title>Singularity v18.2</title>
     <style>
-        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; }
+        body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; touch-action: none; }
         canvas { display: block; }
         #overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: #000; z-index: 100;
+            background: #000; z-index: 1000;
         }
         .start-btn {
-            padding: 18px 45px; color: #fff; background: transparent;
-            border: 1px solid #00f2fe; border-radius: 4px; font-weight: bold; cursor: pointer;
-            letter-spacing: 4px; box-shadow: 0 0 15px rgba(0, 242, 254, 0.3);
+            padding: 20px 50px; color: #fff; background: transparent;
+            border: 2px solid #00f2fe; border-radius: 4px; font-weight: bold; cursor: pointer;
+            letter-spacing: 4px; font-size: 16px;
         }
         #ui-layer {
             position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
-            width: 85%; max-width: 400px; z-index: 50; background: rgba(0,0,0,0.8); 
+            width: 85%; max-width: 400px; z-index: 500; background: rgba(0,0,0,0.8); 
             padding: 15px; border-radius: 12px; backdrop-filter: blur(10px);
+            display: none; border: 1px solid rgba(255,255,255,0.1);
         }
         .label { font-size: 10px; color: #00f2fe; margin-bottom: 5px; font-weight: bold; letter-spacing: 1px;}
     </style>
@@ -28,12 +29,12 @@
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">IGNITE v18.1</button>
+    <button id="startBtn" class="start-btn">BOOT v18.2</button>
 </div>
 
-<div id="ui-layer" style="display:none;">
+<div id="ui-layer">
     <div class="label">AUDIO SENSITIVITY</div>
-    <input type="range" id="sensSlider" min="1" max="60" step="0.1" value="25">
+    <input type="range" id="sensSlider" min="1" max="100" step="0.1" value="30">
 </div>
 
 <canvas id="waveCanvas"></canvas>
@@ -45,17 +46,18 @@ let audioCtx, analyser, dataArray, isRunning = false;
 let bands = [], charge = 0, flash = 0, shockwave = 0, rayLife = 0, lastCoreSize = 0;
 let vocalSustainFrames = 0;
 const shockwaves = [];
+const pPool = [];
 
-const MAX_P = 800;
-const pPool = Array.from({ length: MAX_P }, () => ({ x:0, y:0, vx:0, vy:0, life:0, hue:0, active:false }));
+// パーティクル初期化
+for(let i=0; i<800; i++) pPool.push({x:0, y:0, vx:0, vy:0, life:0, hue:0, active:false});
 
-// --- [数学的蓄積パラメーター] ---
-const CHARGE_THRESHOLD = 50;  // 充電開始しきい値 (T)
+// --- パラメーター (数学的蓄積モデル) ---
+const CHARGE_THRESHOLD = 50;  // 充電しきい値 (T)
 const CRITICAL_POINT = 120;   // 臨界点 (C_max)
 const CHARGE_RATE = 0.5;      // 蓄積レート (R_charge)
 const DECAY_RATE = 0.08;      // 減衰レート (R_decay)
-const VOCAL_TRIGGER_VAL = 190; // 爆発点火ボーカル値
-const VOCAL_SUSTAIN_VAL = 150; // 衝撃波放出ボーカル値
+const VOCAL_TRIGGER_VAL = 190; // 爆発点火
+const VOCAL_SUSTAIN_VAL = 150; // 衝撃波用
 
 function spawn(x, y, hue, vx, vy) {
     const p = pPool.find(p => !p.active) || pPool[0];
@@ -65,8 +67,163 @@ function spawn(x, y, hue, vx, vy) {
 
 document.getElementById('startBtn').onclick = async () => {
     try {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        await audioCtx.resume();
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const source = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
-        analyser.
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+        
+        document.getElementById('overlay').style.display = 'none';
+        document.getElementById('ui-layer').style.display = 'block';
+        isRunning = true;
+        resize();
+        animate();
+    } catch (err) {
+        alert("Audio Init Failed: " + err.message);
+    }
+};
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    setupBands();
+}
+
+function setupBands() {
+    bands = [];
+    const sampleRate = audioCtx ? audioCtx.sampleRate : 48000;
+    let freq = 25;
+    while (freq < 16000) {
+        let nextFreq = freq * 1.25;
+        bands.push({ start: Math.floor(freq * 2048 / sampleRate), end: Math.floor(nextFreq * 2048 / sampleRate), freq });
+        freq = nextFreq;
+    }
+}
+
+function explode(centerX, centerY) {
+    flash = 1.0; shockwave = 10; rayLife = 1.0;
+    lastCoreSize = charge * 0.7;
+    for (let i = 0; i < 500; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = Math.random() * 35 + 5;
+        spawn(centerX, centerY, Math.random() * 40 + 200, Math.cos(ang) * spd, Math.sin(ang) * spd);
+    }
+    charge = 0;
+}
+
+function animate() {
+    if (!isRunning) return;
+    requestAnimationFrame(animate);
+    analyser.getByteFrequencyData(dataArray);
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#000004'; ctx.globalAlpha = 0.25;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalAlpha = 1.0;
+
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height * 0.45;
+    const sens = parseFloat(document.getElementById('sensSlider').value);
+    
+    let totalAmp = 0, vocalMax = 0;
+    ctx.globalCompositeOperation = 'lighter';
+
+    bands.forEach((b, i) => {
+        let p = 0;
+        for (let j = b.start; j <= b.end; j++) if (dataArray[j] > p) p = dataArray[j];
+        if (b.freq > 1800 && b.freq < 5500 && p > vocalMax) vocalMax = p;
+        let val = Math.max(0, p - 15);
+        totalAmp += val;
+
+        const r = Math.pow((val / 255) * sens, 0.3) * canvas.width * 0.42;
+        if (r > 3) {
+            const hue = 260 + (i * 2.2);
+            for (let s = 0; s < 6; s++) {
+                const angle = s * (Math.PI/3) + (Date.now() * 0.0003);
+                ctx.fillStyle = `hsla(${hue}, 100%, 75%, 0.1)`;
+                ctx.beginPath(); ctx.arc(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r, 2, 0, 7); ctx.fill();
+            }
+        }
+    });
+
+    const avg = totalAmp / bands.length;
+    if (avg > CHARGE_THRESHOLD) charge += (avg - CHARGE_THRESHOLD) * CHARGE_RATE;
+    else charge -= charge * DECAY_RATE;
+    charge = Math.max(0, Math.min(charge, CRITICAL_POINT));
+
+    if (charge >= CRITICAL_POINT && vocalMax > VOCAL_TRIGGER_VAL) explode(centerX, centerY);
+
+    if (vocalMax > VOCAL_SUSTAIN_VAL) {
+        vocalSustainFrames++;
+        if (vocalSustainFrames > 20 && vocalSustainFrames % 10 === 0) shockwaves.push({ r: 10, life: 1.0 });
+    } else { vocalSustainFrames = 0; }
+
+    shockwaves.forEach((sw, i) => {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${sw.life * 0.3})`;
+        ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(centerX, centerY, sw.r, 0, 7); ctx.stroke();
+        sw.r += 10; sw.life -= 0.015;
+        if (sw.life <= 0) shockwaves.splice(i, 1);
+    });
+
+    // --- テーパード・リニア・レイ (一軸の曲線幅レイ) ---
+    if (rayLife > 0) {
+        const peakWidth = Math.min(lastCoreSize * 1.2, canvas.height * 0.25) * rayLife;
+        
+        // ハロー
+        const hGrd = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, canvas.width * 0.5);
+        hGrd.addColorStop(0, `hsla(210, 100%, 75%, ${rayLife * 0.3})`);
+        hGrd.addColorStop(0.5, 'transparent');
+        ctx.fillStyle = hGrd; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 形状描画
+        ctx.beginPath();
+        const steps = 40;
+        for(let i=-steps; i<=steps; i++){
+            const x = centerX + (canvas.width/2) * (i/steps);
+            const w = peakWidth * Math.pow(1 - Math.abs(i/steps), 4.0); // 4乗で急峻なカーブ
+            if(i===-steps) ctx.moveTo(x, centerY - w); else ctx.lineTo(x, centerY - w);
+        }
+        for(let i=steps; i>=-steps; i--){
+            const x = centerX + (canvas.width/2) * (i/steps);
+            const w = peakWidth * Math.pow(1 - Math.abs(i/steps), 4.0);
+            ctx.lineTo(x, centerY + w);
+        }
+        ctx.closePath();
+        
+        const bGrd = ctx.createLinearGradient(centerX - 100, centerY, centerX + 100, centerY);
+        bGrd.addColorStop(0, `rgba(200, 240, 255, 0)`);
+        bGrd.addColorStop(0.5, `rgba(255, 255, 255, ${rayLife})`);
+        bGrd.addColorStop(1, `rgba(200, 240, 255, 0)`);
+        ctx.fillStyle = bGrd; ctx.fill();
+        rayLife -= 0.007;
+    }
+
+    if (charge > 1) {
+        const s = charge * 0.6;
+        const grad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, s);
+        grad.addColorStop(0, `rgba(255, 255, 255, ${charge/CRITICAL_POINT})`);
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        const pulse = charge >= CRITICAL_POINT ? Math.sin(Date.now()*0.03)*5 : 0;
+        ctx.beginPath(); ctx.arc(centerX, centerY, s + pulse, 0, 7); ctx.fill();
+    }
+
+    if (flash > 0) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${flash})`; ctx.fillRect(0,0,canvas.width,canvas.height);
+        flash *= 0.82;
+    }
+    pPool.forEach(p => {
+        if (!p.active) return;
+        p.x += p.vx; p.y += p.vy; p.life -= 0.015;
+        if (p.life <= 0) p.active = false;
+        ctx.fillStyle = `rgba(255, 255, 255, ${p.life})`;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 1.2, 0, 7); ctx.fill();
+    });
+}
+window.addEventListener('resize', resize);
+</script>
+</body>
+</html>
