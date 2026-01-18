@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Stellar Rays v16.5</title>
+    <title>Stellar Beam v16.6</title>
     <style>
         body { margin: 0; background: #000; color: white; overflow: hidden; font-family: sans-serif; }
         canvas { display: block; }
@@ -21,7 +21,7 @@
 <body>
 
 <div id="overlay">
-    <button id="startBtn" class="start-btn">IGNITE STELLAR RAYS</button>
+    <button id="startBtn" class="start-btn">IGNITE STELLAR BEAM</button>
 </div>
 
 <canvas id="waveCanvas"></canvas>
@@ -30,19 +30,18 @@
 const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 let audioCtx, analyser, dataArray, isRunning = false;
-let bands = [], charge = 0, flash = 0, shockwave = 0;
+let bands = [], charge = 0, flash = 0, shockwave = 0, rayLife = 0;
 
-// パーティクル & 残光プール
-const MAX_P = 1000;
+// パーティクル・プール
+const MAX_P = 800;
 const pPool = Array.from({ length: MAX_P }, () => ({ x:0, y:0, vx:0, vy:0, life:0, hue:0, active:false }));
-const rays = [];
 
-// --- 調整用パラメータ ---
-const INSTANT_LIMIT = 250;      // 瞬間爆発(0-255)
-const CHARGE_THRESHOLD = 45;    // 蓄積開始しきい値
+// --- 調整用パラメータ (より厳格な爆発条件) ---
+const INSTANT_LIMIT = 254;      // 瞬間爆発：ほぼ最高音量
+const CHARGE_THRESHOLD = 85;    // 蓄積開始：かなり大きな音が必要 (以前の45から大幅UP)
 const CRITICAL_POINT = 100;     // 臨界点
-const CHARGE_RATE = 0.33;       // 5秒で満タン(100 / (60fps * 5s))
-const DECAY_RATE = 0.98;        // 減衰率
+const CHARGE_RATE = 0.33;       // 約5秒間(300フレーム)の持続で爆発
+const DECAY_RATE = 0.95;        // 放電：静かな時にエネルギーが抜ける速さ
 
 function spawn(x, y, hue, vx, vy) {
     const p = pPool.find(p => !p.active) || pPool[0];
@@ -84,20 +83,11 @@ function setupBands() {
 function explode(centerX, centerY) {
     flash = 1.0;
     shockwave = 10;
-    // 粒子の放出
+    rayLife = 1.0; // ビームの寿命をセット
     for (let i = 0; i < 400; i++) {
         const ang = Math.random() * Math.PI * 2;
-        const spd = Math.random() * 25 + 5;
+        const spd = Math.random() * 28 + 4;
         spawn(centerX, centerY, Math.random() * 60 + 200, Math.cos(ang) * spd, Math.sin(ang) * spd);
-    }
-    // 長い残光(Rays)の生成
-    for (let i = 0; i < 24; i++) {
-        rays.push({
-            angle: (i / 24) * Math.PI * 2 + Math.random()*0.2,
-            len: Math.max(canvas.width, canvas.height) * 1.2,
-            life: 1.0,
-            hue: Math.random() * 40 + 200
-        });
     }
 }
 
@@ -108,7 +98,7 @@ function animate() {
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = '#000008';
-    ctx.globalAlpha = 0.18;
+    ctx.globalAlpha = 0.22;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 1.0;
 
@@ -132,22 +122,18 @@ function animate() {
         if (r > 10) {
             for (let s = 0; s < 6; s++) {
                 const angle = s * (Math.PI/3) + (Date.now() * 0.0005);
-                ctx.fillStyle = `hsla(${hue}, 100%, 70%, 0.1)`;
+                ctx.fillStyle = `hsla(${hue}, 100%, 70%, 0.12)`;
                 ctx.beginPath(); ctx.arc(centerX + Math.cos(angle) * r, centerY + Math.sin(angle) * r, 2, 0, 7); ctx.fill();
             }
         }
     });
 
-    // --- 改良版トリガー・ロジック ---
+    // --- トリガー・ロジック調整 ---
     const avgAmp = totalAmp / bands.length;
-
-    // A: 瞬間爆発
     if (maxAmpInFrame >= INSTANT_LIMIT) {
         explode(centerX, centerY);
         charge = 0;
-    } 
-    // B: 持続蓄積
-    else if (avgAmp > CHARGE_THRESHOLD) {
+    } else if (avgAmp > CHARGE_THRESHOLD) {
         charge += CHARGE_RATE;
     } else {
         charge *= DECAY_RATE;
@@ -158,48 +144,57 @@ function animate() {
         charge = 0;
     }
 
-    // --- 演出描画 ---
-    // 1. 長い残光(Rays)
-    rays.forEach((r, i) => {
-        ctx.strokeStyle = `hsla(${r.hue}, 100%, 80%, ${r.life * 0.5})`;
-        ctx.lineWidth = 2 * r.life;
-        ctx.beginPath();
-        ctx.moveTo(centerX, centerY);
-        ctx.lineTo(centerX + Math.cos(r.angle) * r.len, centerY + Math.sin(r.angle) * r.len);
-        ctx.stroke();
-        r.life -= 0.008; // ゆっくり消える
-        if (r.life <= 0) rays.splice(i, 1);
-    });
+    // --- 一軸の超高輝度ビーム描画 ---
+    if (rayLife > 0) {
+        const rayH = 4 * rayLife; // 芯の太さ
+        const glowH = 60 * rayLife; // 周囲の光の広がり
+        
+        // 横方向の超高輝度グラデーション
+        const grad = ctx.createLinearGradient(0, centerY, canvas.width, centerY);
+        grad.addColorStop(0, 'transparent');
+        grad.addColorStop(0.5, `rgba(255, 255, 255, ${rayLife})`); // 中心は真っ白
+        grad.addColorStop(1, 'transparent');
+        
+        // 周囲の淡い光
+        ctx.fillStyle = `hsla(210, 100%, 70%, ${rayLife * 0.3})`;
+        ctx.fillRect(0, centerY - glowH/2, canvas.width, glowH);
+        
+        // 鋭い芯の光
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, centerY - rayH/2, canvas.width, rayH);
+        
+        rayLife -= 0.007; // 約2秒かけて消える
+    }
 
-    // 2. 衝撃波
+    // 衝撃波
     if (shockwave > 0) {
         ctx.strokeStyle = `rgba(255, 255, 255, ${Math.max(0, 1 - shockwave/canvas.width)})`;
-        ctx.lineWidth = 6;
+        ctx.lineWidth = 5;
         ctx.beginPath(); ctx.arc(centerX, centerY, shockwave, 0, 7); ctx.stroke();
         shockwave += 35;
         if (shockwave > canvas.width * 1.5) shockwave = 0;
     }
 
-    // 3. フラッシュ
+    // フラッシュ
     if (flash > 0) {
         ctx.fillStyle = `rgba(255, 255, 255, ${flash})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        flash *= 0.85;
+        flash *= 0.82;
     }
 
-    // 4. コア(脈動)
+    // 蓄積コア
     if (charge > 5) {
-        const size = (charge * 0.7) + Math.sin(Date.now()*0.02)*5;
-        ctx.fillStyle = `hsla(200, 100%, 90%, ${charge/120})`;
+        const size = (charge * 0.7);
+        ctx.fillStyle = `hsla(190, 100%, 90%, ${charge/120})`;
         ctx.beginPath(); ctx.arc(centerX, centerY, size, 0, 7); ctx.fill();
     }
 
-    // 5. 粒子
+    // 粒子
     pPool.forEach(p => {
         if (!p.active) return;
-        p.x += p.vx; p.y += p.vy; p.life -= 0.015;
-        if (p.life <= 0) { p.active = false; return; }
-        ctx.fillStyle = `hsla(${p.hue}, 100%, 80%, ${p.life})`;
+        p.x += p.vx; p.y += p.vy; p.life -= 0.016;
+        if (p.life <= 0) p.active = false;
+        ctx.fillStyle = `hsla(${p.hue}, 100%, 85%, ${p.life})`;
         ctx.beginPath(); ctx.arc(p.x, p.y, 2, 0, 7); ctx.fill();
     });
 }
